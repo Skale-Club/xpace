@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Xpace</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <aside id="side">
+    <div class="brand">
+      <img src="logo.png" alt="">
+      <div>
+        <b>Xpace</b>
+        <small data-t="tagline"></small>
+      </div>
+    </div>
+    <nav id="nav"></nav>
+    <button id="skale" class="skale" title="skale.club"><img src="skaleclub.png" alt=""><span><small data-t="madeBy"></small>Skale Club</span></button>
+    <div class="side-foot">
+      <select id="lang" aria-label="Language">
+        <option value="en">English</option>
+        <option value="pt">Português</option>
+        <option value="es">Español</option>
+      </select>
+      <span class="ver"></span>
+    </div>
+  </aside>
+  <main>
+    <div id="update-bar" hidden></div>
+    <header>
+      <div class="head-text">
+        <h1 id="title"></h1>
+        <div id="subtitle"></div>
+      </div>
+      <div id="actions"></div>
+    </header>
+    <div id="page"></div>
+  </main>
+  <div id="toast"></div>
+  <script src="i18n.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
