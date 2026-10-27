@@ -1,5 +1,9 @@
 # Xpace
 
+> **Xpace is now part of [Xpecs](https://github.com/Skale-Club/xpecs).** Its disk space analyzer
+> lives on as the Disk space page in Xpecs, next to cleaning, drivers and hardware. This repository
+> is kept for reference and gets no new features.
+
 Portable disk space analyzer for Windows, in the spirit of TreeSize. Shows which folders and files
 take the space on a drive. One small exe: no installer, no administrator rights. 🇧🇷
 [Português](#português) · 🇪🇸 [Español](#español)
@@ -29,10 +33,18 @@ Language: the selector at the bottom left (English, Português, Español).
 
 | Page | Contents |
 |---|---|
-| Scan | Every drive with free and used space; scan a drive or choose any folder |
+| Scan | A search box for any folder, your own folders, recent scans, and every drive with free and used space |
 | Folders | Treemap of the selected folder, and a folder tree sorted by size with each item's share of its parent, file and folder counts and last change |
 | Largest files | The 250 largest files of the scan, with their folders |
 | File types | Space and file count per extension |
+
+To pick what to scan, type or paste a path in the search box (it completes folder names like
+Explorer's address bar; `~` and `%VARIABLES%` work), or type part of a folder's name to find it
+anywhere on your local drives. ↑ ↓ choose, **Enter** scans, **Tab** goes into the folder, and
+**Ctrl+L** brings the box back from any page. **Browse…** opens Windows' folder picker, and you can
+also click one of your folders (Desktop, Documents, Downloads…), a recent scan, a drive, or drop a
+folder from Explorer on the window. The first name search builds a list of folder names in the
+background (up to 250,000 folders or 45 seconds); results appear right away and fill in as it goes.
 
 Click a folder (in the tree or in the treemap) to open it; the trail above the treemap leads back up.
 Double-click a row, or use its arrow button, to show it in Explorer. **Export CSV** saves the current
@@ -73,6 +85,38 @@ Scanning only reads. Deleting happens only for what you select and confirm, in *
   marked and count as empty. Running Xpace as administrator reads more of them.
 - Hard links count once per name, as in Explorer.
 
+## Use with Claude Code and Codex
+
+`Xpace.exe --mcp` runs Xpace as a local [MCP](https://modelcontextprotocol.io) server, with no
+window, so AI assistants such as Claude Code and Codex can use its engine on this PC. Xpace itself
+sends nothing over the network; what the assistant reads goes to its AI provider, as with anything
+else you share with it. It only reads: deleting stays in the window, where you review it.
+
+Claude Code (available in every project):
+
+```bash
+claude mcp add --scope user xpace -- "C:\Apps\Xpace\Xpace.exe" --mcp
+```
+
+Codex, in `%USERPROFILE%\.codex\config.toml`:
+
+```toml
+[mcp_servers.xpace]
+command = 'C:\Apps\Xpace\Xpace.exe'
+args = ["--mcp"]
+```
+
+Use the path where your `Xpace.exe` is. Tools:
+
+- `app_info`: version, where the exe and `Data` folder are, and the saved settings.
+- `list_drives`: drives with their file system, total and free space.
+- `scan_folder`: `path`, `limit`: scans a folder or drive and keeps the result; returns the totals
+  and the largest subfolders.
+- `list_folder`: `path`, `limit`: a folder's subfolders (largest first) and files, from the kept
+  scan or a new one.
+- `largest_files`: `limit`: the largest files in the kept scan.
+- `file_types`: `limit`: space per extension in the kept scan.
+
 ## Development
 
 Tauri 2, Rust and plain HTML/CSS/JavaScript. See the [development and release
@@ -86,7 +130,10 @@ O Xpace mostra o que ocupa espaço no disco, no estilo do TreeSize. É um exe pe
 e sem precisar de administrador. Ainda não há release publicada (27/10/2026); veja as
 [instruções de compilação](docs/DEVELOPMENT.md).
 
-- Abra o `Xpace.exe`, escolha um disco ou uma pasta e espere a análise.
+- Abra o `Xpace.exe` e escolha o que analisar: digite ou cole um caminho na caixa de busca (ela
+  completa os nomes como a barra de endereço do Explorer), digite parte do nome de uma pasta para
+  achá-la em qualquer disco, clique em uma das suas pastas, em uma análise recente ou em um disco, use
+  **Procurar…**, ou arraste uma pasta do Explorer para a janela. **Ctrl+L** volta para a busca.
 - **Pastas**: treemap da pasta selecionada e árvore ordenada por tamanho. Clique para abrir uma pasta;
   clique duplo mostra no Explorer.
 - **Maiores arquivos** e **Tipos de arquivo** mostram para onde o espaço foi. **Exportar CSV** salva a
@@ -96,6 +143,9 @@ e sem precisar de administrador. Ainda não há release publicada (27/10/2026); 
   para desfazer) ou **Excluir definitivamente…**, que antes mostra o que será apagado e quais programas
   estão usando os arquivos, e pode fechar esses programas ou excluir ao reiniciar. Pastas do sistema,
   de programas e as pastas do perfil em si são protegidas. A árvore se atualiza sem nova análise.
+- **Claude Code e Codex**: `Xpace.exe --mcp` roda o Xpace como servidor MCP local, sem janela, para
+  assistentes de IA usarem a análise de disco (só leitura; excluir continua na janela). Veja [Use
+  with Claude Code and Codex](#use-with-claude-code-and-codex).
 
 ## Español
 
@@ -103,7 +153,11 @@ Xpace muestra qué ocupa espacio en el disco, al estilo de TreeSize. Es un exe p
 instalación y sin necesidad de administrador. Aún no hay release publicada (27/10/2026); consulta las
 [instrucciones de compilación](docs/DEVELOPMENT.md).
 
-- Abre `Xpace.exe`, elige un disco o una carpeta y espera el análisis.
+- Abre `Xpace.exe` y elige qué analizar: escribe o pega una ruta en el cuadro de búsqueda (completa
+  los nombres como la barra de direcciones del Explorador), escribe parte del nombre de una carpeta
+  para encontrarla en cualquier disco, haz clic en tus carpetas, en un análisis reciente o en un
+  disco, usa **Examinar…**, o arrastra una carpeta desde el Explorador a la ventana. **Ctrl+L** vuelve
+  a la búsqueda.
 - **Carpetas**: treemap de la carpeta seleccionada y árbol ordenado por tamaño. Haz clic para abrir
   una carpeta; doble clic la muestra en el Explorador.
 - **Archivos más grandes** y **Tipos de archivo** muestran adónde fue el espacio. **Exportar CSV**
@@ -113,6 +167,9 @@ instalación y sin necesidad de administrador. Aún no hay release publicada (27
   puede deshacer) o **Eliminar definitivamente…**, que antes muestra qué se borrará y qué programas usan
   los archivos, y puede cerrarlos o eliminar al reiniciar. Las carpetas del sistema, de programas y las
   carpetas del perfil en sí están protegidas. El árbol se actualiza sin volver a analizar.
+- **Claude Code y Codex**: `Xpace.exe --mcp` ejecuta Xpace como servidor MCP local, sin ventana,
+  para que asistentes de IA usen el análisis de disco (solo lectura; eliminar sigue en la ventana).
+  Consulta [Use with Claude Code and Codex](#use-with-claude-code-and-codex).
 
 ## Skale Club apps
 
@@ -122,11 +179,10 @@ Portuguese and Spanish UI text. Each app has its own executable and portable Dat
 
 | App | Purpose |
 | --- | --- |
+| [Xpecs](https://github.com/Skale-Club/xpecs) | Care for the PC (cleaning, disk space, drivers, startup, apps) and inspect hardware, live sensors and benchmarks |
 | [Xink](https://github.com/Skale-Club/xink) | Draw over the screen during presentations or recordings |
-| [Xpecs](https://github.com/Skale-Club/xpecs) | Inspect hardware, live sensors and benchmark results |
-| [Xcare](https://github.com/Skale-Club/xcare) | Clean selected files, manage startup programs and explicitly remove stubborn files |
 | [Xnote](https://github.com/Skale-Club/xnote) | Transcribe meetings and turn notes into summaries and tasks |
-| [Xpace](https://github.com/Skale-Club/xpace) | Analyze disk usage with a folder tree, treemap, largest files and file-type totals |
+| [Xvert](https://github.com/Skale-Club/xvert) | Convert videos, music and pictures between formats |
 
 Repository access may be required depending on project visibility. Report problems through the
 relevant repository, including app version, Windows version and reproduction steps. Remove

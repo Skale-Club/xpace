@@ -20,7 +20,7 @@
 
 /* ---------- drives ---------- */
 
-.drives { display: grid; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); gap: 16px; margin: 14px 0 24px; }
+.drives { display: grid; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); gap: 16px; margin: 0 0 20px; }
 .drive {
   display: flex;
   flex-direction: column;
@@ -41,7 +41,123 @@
 .drive .meter { height: 10px; }
 .drive .use { display: flex; justify-content: space-between; color: var(--muted); font-size: 12.5px; }
 .drive .use b { color: var(--fg); font-weight: 600; }
-.pick-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+
+/* ---------- finding a folder ---------- */
+
+.finder { position: relative; z-index: 5; margin: 2px 0 26px; }
+.finder-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 6px 6px 18px;
+  border: 1px solid var(--line-strong);
+  border-radius: 14px;
+  background: linear-gradient(180deg, rgba(143, 169, 238, 0.06), rgba(143, 169, 238, 0) 70%), var(--card-solid);
+  box-shadow: var(--shadow);
+  transition: border-color 0.18s, box-shadow 0.18s;
+}
+.finder-bar:focus-within { border-color: rgba(143, 169, 238, 0.55); box-shadow: 0 0 0 4px var(--brand-tint), var(--shadow); }
+.finder-bar > svg.i { flex: none; width: 20px; height: 20px; color: var(--brand-soft); }
+.finder-bar input { flex: 1; min-width: 0; padding: 11px 0; border: 0; outline: 0; background: transparent; font-size: 15.5px; }
+.finder-bar input::placeholder { color: var(--faint); }
+.finder-bar:focus-within kbd { display: none; }
+kbd {
+  padding: 2px 6px;
+  border: 1px solid var(--line-strong);
+  border-bottom-width: 2px;
+  border-radius: 6px;
+  background: rgba(143, 169, 238, 0.06);
+  color: var(--muted);
+  font: 600 11px var(--font-mono);
+  white-space: nowrap;
+}
+
+.suggest {
+  position: absolute;
+  inset: calc(100% + 8px) 0 auto;
+  overflow: hidden;
+  border: 1px solid var(--line-strong);
+  border-radius: 14px;
+  background: var(--card-solid);
+  box-shadow: 0 28px 60px -22px rgba(0, 0, 0, 0.95), 0 0 0 1px rgba(0, 0, 0, 0.35);
+  animation: pop 0.16s var(--ease);
+}
+.suggest[hidden] { display: none; }
+.sug-list { max-height: min(52vh, 430px); overflow-y: auto; padding: 6px; }
+.sug {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 9px 12px;
+  border: 0;
+  border-radius: 10px;
+  background: none;
+  text-align: left;
+  cursor: pointer;
+}
+.sug.on { background: var(--brand-tint); }
+.sug > svg.i { flex: none; width: 18px; height: 18px; color: var(--brand-soft); }
+.sug > span { display: flex; flex-direction: column; min-width: 0; }
+.sug b, .sug small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sug b { font-weight: 600; font-size: 14px; }
+.sug small { color: var(--muted); font-size: 12px; }
+.sug mark { background: none; color: var(--brand-soft); text-decoration: underline 2px rgba(143, 169, 238, 0.45); text-underline-offset: 3px; }
+.sug-state { display: flex; align-items: center; gap: 10px; padding: 12px 14px; color: var(--muted); font-size: 13px; }
+.sug-state .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--brand-soft); animation: pulse 1s ease-in-out infinite; }
+.sug-keys { display: flex; flex-wrap: wrap; gap: 6px 18px; padding: 9px 14px; border-top: 1px solid var(--line); background: var(--well); color: var(--faint); font-size: 11.5px; }
+.sug-keys kbd { margin-right: 2px; }
+
+.sect { margin: 0 0 10px; color: var(--muted); font: 600 13px var(--font); }
+#shortcuts section { margin-bottom: 22px; }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 36px;
+  padding: 0 15px 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 99px;
+  background: var(--card);
+  font-size: 13.5px;
+  cursor: pointer;
+  transition: border-color 0.15s, background-color 0.15s, transform 0.15s var(--ease);
+}
+.chip:hover { border-color: var(--line-strong); background-color: var(--raised-hover); transform: translateY(-1px); }
+.chip svg.i { flex: none; width: 16px; height: 16px; color: var(--brand-soft); }
+.chip.recent { gap: 0; padding: 0; cursor: default; }
+.chip.recent:hover { transform: none; }
+.chip.recent > button { display: inline-flex; align-items: center; height: 100%; border: 0; background: none; cursor: pointer; }
+.chip.recent > button:first-child { gap: 8px; max-width: 380px; padding: 0 6px 0 12px; }
+.chip.recent > button:first-child svg.i { color: var(--muted); }
+.chip.recent span { white-space: nowrap; }
+.chip.recent small { overflow: hidden; color: var(--faint); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.chip .forget { padding: 0 11px 0 5px; color: var(--faint); }
+.chip .forget svg.i { width: 13px; height: 13px; color: inherit; }
+.chip .forget:hover { color: var(--bad); }
+
+#drop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  place-items: center;
+  background: rgba(5, 9, 18, 0.72);
+  backdrop-filter: blur(6px);
+  pointer-events: none;
+  animation: fade 0.15s ease;
+}
+#drop[hidden] { display: none; }
+#drop > div { display: flex; flex-direction: column; align-items: center; gap: 18px; font: 700 22px var(--font-display); }
+.drop-ring {
+  width: 120px;
+  height: 120px;
+  border-radius: 50%;
+  background: url("logo.png") center / 64px no-repeat, radial-gradient(circle, rgba(81, 115, 214, 0.35), transparent 70%);
+  box-shadow: 0 0 0 2px rgba(143, 169, 238, 0.5), 0 0 60px var(--brand-glow);
+  animation: pulse 1.4s ease-in-out infinite;
+}
 
 /* ---------- scanning ---------- */
 

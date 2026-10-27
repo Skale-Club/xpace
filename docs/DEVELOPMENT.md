@@ -43,6 +43,15 @@ for one folder at a time (`open_folder`), and that folder's files are read from 
 opened. Junctions and directory symbolic links are listed but never followed. A scan emits
 `progress` events while it runs and can be cancelled.
 
+Choosing a folder: `find.rs` answers the search box (`find_folders`). A typed path is completed from
+its parent folder on disk; anything else searches an index of folder names, built on a background
+thread the first time someone searches, walking the profile and the local drives together breadth
+first (network drives are left out; at most 250,000 folders, 7 levels or 45 seconds). While it is
+still growing the answer says `searching` and the page asks again. `known_folders` reads the
+user's folders with `SHGetKnownFolderPath`, so a Documents moved to OneDrive is found where it is;
+`pick_folder` is `IFileOpenDialog` in folder mode, called through its COM table. The last eight
+scanned folders are kept in `recent` in the settings.
+
 Deleting: `recycle` sends the selection to the Recycle Bin with `SHFileOperationW` (undo allowed,
 Windows warns before destroying anything too big for the Bin). Permanent deletion goes through
 `force_delete.rs`, a copy of Xcare's reviewed force-delete module without its file pickers:
@@ -56,6 +65,28 @@ All the Skale X apps use the same palette: navy surfaces, primary blue `#5173D6`
 `#8FA9EE`. Keep English, Portuguese and Spanish UI strings consistent. Settings and exports use the
 portable data directory; do not commit runtime data or private signing keys.
 
+## Local MCP server
+
+`Xpace.exe --mcp` makes `main()` call `mcp_tools::serve()` before Tauri starts, so no window opens.
+`mcp.rs` is the MCP server over stdio (one JSON-RPC 2.0 message per line: `initialize`, `ping`,
+`tools/list`, `tools/call`, plus the shared `app_info` tool). It is the same file in every Skale app:
+change it in one and copy it to the others. `mcp_tools.rs` lists this app's tools and calls the same
+modules the window uses. Keep stdout for protocol messages only (log with `eprintln!`), and return
+`Err` from a tool instead of panicking: release builds abort on panic. Release builds use the GUI
+subsystem and still talk over the pipes an MCP client opens.
+
+To check by hand, write these lines to the exe's stdin; each request gets one JSON line back:
+
+```text
+{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}
+{"jsonrpc":"2.0","id":2,"method":"tools/list"}
+{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"app_info","arguments":{}}}
+```
+
+Any MCP client can drive it the same way, for example the MCP Inspector:
+`npx @modelcontextprotocol/inspector "<path>\Xpace.exe" --mcp`.
+`cargo test mcp` runs the protocol tests.
+
 ## Validate a change
 
 Run the checks above when changing application code. Unit tests do not validate real Windows
@@ -67,6 +98,9 @@ implementation and check links and commands.
 - Scan a folder containing a junction and check it is listed as a link and not counted.
 - Cancel a scan midway, then rescan; open folders, the treemap and both lists; export a CSV.
 - Check the three languages and the folder dialog.
+- In the search box: type `C:\Us`, use Tab to go down a few levels and Enter to scan; search a
+  name such as `steam` and watch results fill in; try `%LOCALAPPDATA%`; scan from a known folder
+  and a recent one, remove a recent one, and drop a folder from Explorer on the window.
 - Delete a file and a folder to the Recycle Bin and restore them; delete a file that an app has
   open permanently and with "close the apps"; try a protected folder (Documents itself) and check it
   is refused; check the totals after each.

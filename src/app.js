@@ -1,6 +1,8 @@
 'use strict';
 
-// Xpace window: drive picker, scan progress, folder tree with a treemap,
+// Xpace window: what to scan (a search box for paths and folder names, the
+// user's folders, recent scans, drives, or a dropped folder), scan progress,
+// folder tree with a treemap,
 // largest files and file types. The scan lives on the Rust side; folders are
 // fetched one at a time as they are opened. Rows can be selected and moved
 // to the Recycle Bin or, after a review, deleted for good.
@@ -24,7 +26,20 @@ const ICONS = {
   network: '<rect x="16" y="16" width="6" height="6" rx="1"/><rect x="2" y="16" width="6" height="6" rx="1"/><rect x="9" y="2" width="6" height="6" rx="1"/><path d="M5 16v-3a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v3M12 12V8"/>',
   trash: '<path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14M10 11v5M14 11v5"/>',
   alert: '<path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/>',
+  search: '<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>',
+  home: '<path d="M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1z"/>',
+  monitor: '<rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/>',
+  download: '<path d="M12 3v12M7 10l5 5 5-5M5 21h14"/>',
+  image: '<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-5-5L5 21"/>',
+  film: '<rect x="2" y="4" width="20" height="16" rx="2"/><path d="M7 4v16M17 4v16M2 9h5M2 15h5M17 9h5M17 15h5"/>',
+  music: '<path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>',
+  package: '<path d="m21 8-9-5-9 5v8l9 5 9-5z"/><path d="m3 8 9 5 9-5M12 13v8"/>',
+  clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+  x: '<path d="M18 6 6 18M6 6l12 12"/>',
 };
+
+/** Icons for the user's folders, by known folder id. */
+const PLACE_ICONS = { profile: 'home', desktop: 'monitor', documents: 'file', downloads: 'download', pictures: 'image', videos: 'film', music: 'music', appdata: 'folder', programs: 'package' };
 
 const NAV = ['drives', '-', 'folders', 'files', 'types'];
 /** Treemap colours for folders, largest first; files share one muted tone. */
@@ -35,6 +50,14 @@ const pageEl = $('page');
 
 let current = 'drives';
 let drives = null;
+let places = null;      // the user's own folders, from known_folders
+let recent = [];        // folders scanned lately, newest first
+let query = '';         // what the search box holds
+let hits = [];          // folders offered under the search box
+let hitsFor = '';       // the text they answer
+let hit = -1;           // the highlighted one
+let searching = false;  // the folder index is still being built
+let findSeq = 0;
 let scanning = null;    // { path, files, folders, bytes, current } while a scan runs
 let summary = null;     // the last finished scan
 const listings = new Map(); // folder id -> listing from open_folder
@@ -311,12 +334,9 @@ async function refreshAfterDelete() {
 
 // ---------- drives ----------
 
-function renderDrives() {
-  if (!drives) {
-    pageEl.innerHTML = `<div class="loading">${esc(t('loading'))}</div>`;
-    return;
-  }
-  const cards = drives.map((d) => {
+function driveCards() {
+  if (!drives) return `<div class="loading">${esc(t('loading'))}</div>`;
+  return drives.map((d) => {
     const used = d.total - d.free;
     const p = pct(used, d.total);
     const icon = d.kind === 'removable' ? ICONS.usb : d.kind === 'network' ? ICONS.network : ICONS.drives;
@@ -327,10 +347,197 @@ function renderDrives() {
       <div class="use"><span>${esc(t('free', { free: bytes(d.free), total: bytes(d.total) }))}</span><b>${esc(t('used', { pct: Math.round(p) }))}</b></div>
     </button>`;
   }).join('');
-  pageEl.innerHTML = `<p class="note">${esc(t('drivesNote'))}</p>
-    <div class="drives">${cards}</div>
-    <div class="pick-row"><button class="btn primary" data-act="pick">${svg(ICONS.folder)}${esc(t('chooseFolder'))}</button></div>`;
 }
+
+/** "Dev" and "C:\Users\Vanildo" for C:\Users\Vanildo\Dev; a drive stays whole. */
+function splitPath(path) {
+  const trimmed = path.replace(/\\+$/, '');
+  const at = trimmed.lastIndexOf('\\');
+  if (at < 0 || /^[a-z]:$/i.test(trimmed)) return { name: path, parent: '' };
+  return { name: trimmed.slice(at + 1), parent: trimmed.slice(0, at) || trimmed.slice(0, at + 1) };
+}
+
+function shortcuts() {
+  const placeChips = (places || []).map((p) => `<button class="chip" data-scan="${esc(p.path)}" title="${esc(p.path)}">
+    ${svg(ICONS[PLACE_ICONS[p.id]] || ICONS.folder)}<span>${esc(t(`place_${p.id}`))}</span></button>`).join('');
+  const recentChips = recent.map((path) => {
+    const { name, parent } = splitPath(path);
+    return `<span class="chip recent"><button data-scan="${esc(path)}" title="${esc(path)}">${svg(ICONS.clock)}<span>${esc(name)}</span>${parent ? `<small>${esc(parent)}</small>` : ''}</button><button class="forget" data-forget="${esc(path)}" title="${esc(t('forgetRecent'))}" aria-label="${esc(t('forgetRecent'))}">${svg(ICONS.x)}</button></span>`;
+  }).join('');
+  return (placeChips ? `<section><h3 class="sect">${esc(t('quickAccess'))}</h3><div class="chips">${placeChips}</div></section>` : '')
+    + (recentChips ? `<section><h3 class="sect">${esc(t('recent'))}</h3><div class="chips">${recentChips}</div></section>` : '');
+}
+
+function renderDrives() {
+  pageEl.innerHTML = `<div class="finder">
+      <div class="finder-bar">
+        ${svg(ICONS.search)}
+        <input id="q" type="text" spellcheck="false" autocomplete="off" role="combobox" aria-expanded="false" aria-controls="suggest" placeholder="${esc(t('searchPlaceholder'))}">
+        <kbd>Ctrl L</kbd>
+        <button class="btn" data-act="pick">${svg(ICONS.folder)}${esc(t('browse'))}</button>
+      </div>
+      <div class="suggest" id="suggest" role="listbox" hidden></div>
+    </div>
+    <div id="shortcuts">${shortcuts()}</div>
+    <h3 class="sect">${esc(t('drivesHeading'))}</h3>
+    <div class="drives" id="drive-cards">${driveCards()}</div>
+    <p class="note">${esc(t('drivesNote'))}</p>`;
+  const input = $('q');
+  input.value = query;
+  input.focus();
+  if (query.trim()) suggest();
+}
+
+/** Redraws one part of the drives page, keeping the search box as it is. */
+function refreshDrives(id, html) {
+  if (current !== 'drives' || scanning) return;
+  if ($(id)) $(id).innerHTML = html();
+  else render();
+}
+
+// ---------- the search box ----------
+
+/** A typed path rather than a name: "C:...", a network path, "~", "%VAR%". */
+const isPathText = (text) => /^\s*("?[a-z]:|\\\\|~|%)/i.test(text);
+
+/** `name` with the part that matches what was typed marked. */
+function marked(name) {
+  const typed = query.trim();
+  const words = isPathText(typed) ? [typed.slice(typed.lastIndexOf('\\') + 1)] : typed.split(/\s+/);
+  const word = words.find((w) => w && name.toLowerCase().includes(w.toLowerCase()));
+  if (!word) return esc(name);
+  const at = name.toLowerCase().indexOf(word.toLowerCase());
+  return `${esc(name.slice(0, at))}<mark>${esc(name.slice(at, at + word.length))}</mark>${esc(name.slice(at + word.length))}`;
+}
+
+function drawSuggest() {
+  const box = $('suggest');
+  const input = $('q');
+  if (!box || !input) return;
+  const open = document.activeElement === input && query.trim() !== '';
+  box.hidden = !open;
+  input.setAttribute('aria-expanded', String(open));
+  if (!open) return;
+  const rows = hits.map((h, i) => `<button class="sug${i === hit ? ' on' : ''}" data-scan="${esc(h.path)}" role="option" aria-selected="${i === hit}">
+    ${svg(ICONS.folder)}<span><b>${marked(h.name)}</b><small>${esc(h.path)}</small></span></button>`).join('');
+  const state = searching ? `<div class="sug-state"><i class="dot"></i>${esc(t('searchingFolders'))}</div>`
+    : hits.length ? '' : `<div class="sug-state">${esc(t(isPathText(query) ? 'noSubfolders' : 'noMatches'))}</div>`;
+  const keys = `<div class="sug-keys"><span><kbd>↑</kbd><kbd>↓</kbd> ${esc(t('keyChoose'))}</span><span><kbd>Enter</kbd> ${esc(t('keyScan'))}</span><span><kbd>Tab</kbd> ${esc(t('keyOpen'))}</span><span><kbd>Esc</kbd> ${esc(t('keyClear'))}</span></div>`;
+  box.innerHTML = `<div class="sug-list">${rows}${state}</div>${keys}`;
+  box.querySelector('.sug.on')?.scrollIntoView({ block: 'nearest' });
+}
+
+/** Asks for what matches the box; asks again while the index is still growing. */
+async function suggest() {
+  const seq = ++findSeq;
+  const text = query;
+  if (!text.trim()) {
+    hits = [];
+    hit = -1;
+    searching = false;
+    drawSuggest();
+    return;
+  }
+  let found;
+  try {
+    found = await invoke('find_folders', { text });
+  } catch {
+    return;
+  }
+  if (seq !== findSeq) return;
+  // Asking again for the same text (the index grew) keeps the chosen row.
+  const before = text === hitsFor ? hits[hit]?.path : undefined;
+  hits = found.hits;
+  hitsFor = text;
+  searching = found.searching;
+  // A typed path scans as typed unless a row is chosen; a name search goes to the best match.
+  const kept = hits.findIndex((h) => h.path === before);
+  hit = kept >= 0 ? kept : isPathText(text) || !hits.length ? -1 : 0;
+  drawSuggest();
+  if (searching) setTimeout(() => { if (seq === findSeq) suggest(); }, 700);
+}
+
+function scanFromBox(path) {
+  query = '';
+  hits = [];
+  hit = -1;
+  // "C:\Dev\" scans as "C:\Dev"; a drive keeps its backslash.
+  startScan(path.trim().replace(/([^:])\\+$/, '$1'));
+}
+
+function focusSearch() {
+  if (scanning) return;
+  if (current !== 'drives') {
+    current = 'drives';
+    render();
+    enter();
+  }
+  $('q')?.focus();
+  $('q')?.select();
+}
+
+let typingTimer = 0;
+pageEl.addEventListener('input', (e) => {
+  if (e.target.id !== 'q') return;
+  query = e.target.value;
+  clearTimeout(typingTimer);
+  typingTimer = setTimeout(suggest, isPathText(query) ? 90 : 200);
+});
+
+pageEl.addEventListener('keydown', (e) => {
+  if (e.target.id !== 'q') return;
+  const input = e.target;
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    if (!hits.length) return;
+    e.preventDefault();
+    const step = e.key === 'ArrowDown' ? 1 : -1;
+    hit = hit < 0 ? (step > 0 ? 0 : hits.length - 1) : (hit + step + hits.length) % hits.length;
+    drawSuggest();
+  } else if (e.key === 'Enter') {
+    e.preventDefault();
+    const typed = query.trim();
+    if (hit >= 0) scanFromBox(hits[hit].path);
+    else if (isPathText(typed)) scanFromBox(typed);
+  } else if (e.key === 'Tab' && hits.length && query.trim()) {
+    // Opens the chosen folder in the box, to keep going down.
+    e.preventDefault();
+    query = `${hits[Math.max(hit, 0)].path}\\`;
+    input.value = query;
+    hit = -1;
+    suggest();
+  } else if (e.key === 'Escape') {
+    if (query) {
+      e.preventDefault();
+      query = '';
+      input.value = '';
+      suggest();
+    } else {
+      input.blur();
+    }
+  }
+});
+
+pageEl.addEventListener('focusin', (e) => { if (e.target.id === 'q') drawSuggest(); });
+// The box has lost focus only once the event is over.
+pageEl.addEventListener('focusout', (e) => { if (e.target.id === 'q') setTimeout(drawSuggest); });
+// Clicking a suggestion must not take the focus from the box first.
+pageEl.addEventListener('mousedown', (e) => { if (e.target.closest('#suggest')) e.preventDefault(); });
+pageEl.addEventListener('mousemove', (e) => {
+  const row = e.target.closest('.sug');
+  if (!row) return;
+  const i = [...row.parentElement.querySelectorAll('.sug')].indexOf(row);
+  if (i !== hit) {
+    hit = i;
+    $('suggest').querySelectorAll('.sug').forEach((el, n) => el.classList.toggle('on', n === i));
+  }
+});
+
+document.addEventListener('keydown', (e) => {
+  if (e.ctrlKey && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'l' && $('modal').hidden) {
+    e.preventDefault();
+    focusSearch();
+  }
+});
 
 // ---------- scanning ----------
 
@@ -363,6 +570,7 @@ async function startScan(path) {
     const result = await invoke('start_scan', { path });
     if (scanning?.path !== path) return; // a newer scan took over
     summary = result;
+    if (!result.cancelled) recent = [result.path, ...recent.filter((p) => p.toLowerCase() !== result.path.toLowerCase())].slice(0, 8);
     picked.clear();
     listings.clear();
     expanded.clear();
@@ -668,16 +876,19 @@ async function reveal(path, open) {
 }
 
 document.addEventListener('click', async (e) => {
-  const el = e.target.closest('[data-page],[data-act],[data-scan],[data-toggle],[data-select],[data-reveal],[data-open],tr[data-id]');
+  const el = e.target.closest('[data-page],[data-act],[data-scan],[data-forget],[data-toggle],[data-select],[data-reveal],[data-open],tr[data-id]');
   if (!el || el.disabled) return;
   const d = el.dataset;
   if (d.page) {
     current = d.page;
-    if (current === 'drives') invoke('list_drives').then((list) => { drives = list; if (current === 'drives' && !scanning) render(); });
+    if (current === 'drives') invoke('list_drives').then((list) => { drives = list; refreshDrives('drive-cards', driveCards); });
     render();
     enter();
   } else if (d.scan) {
-    startScan(d.scan);
+    scanFromBox(d.scan);
+  } else if (d.forget) {
+    recent = await invoke('forget_recent', { path: d.forget }).catch(() => recent.filter((p) => p !== d.forget));
+    refreshDrives('shortcuts', shortcuts);
   } else if (d.toggle) {
     toggleFolder(Number(d.toggle));
   } else if (d.select) {
@@ -689,8 +900,9 @@ document.addEventListener('click', async (e) => {
   } else if (d.id) {
     selectFolder(Number(d.id));
   } else if (d.act === 'pick') {
-    const path = await invoke('pick_folder').catch((err) => { toast(errText(err)); return null; });
-    if (path) startScan(path);
+    const start = isPathText(query) ? query.trim() : null;
+    const path = await invoke('pick_folder', { start }).catch((err) => { toast(errText(err)); return null; });
+    if (path) scanFromBox(path);
   } else if (d.act === 'cancel') {
     invoke('cancel_scan');
   } else if (d.act === 'rescan') {
@@ -731,6 +943,17 @@ document.addEventListener('dblclick', (e) => {
   reveal(row.dataset.path, row.dataset.id !== undefined);
 });
 
+// A folder dragged in from Explorer is scanned.
+const dropEl = $('drop');
+listen('tauri://drag-enter', () => { if (!scanning && $('modal').hidden) dropEl.hidden = false; });
+listen('tauri://drag-leave', () => { dropEl.hidden = true; });
+listen('tauri://drag-drop', ({ payload }) => {
+  const shown = !dropEl.hidden;
+  dropEl.hidden = true;
+  const path = payload?.paths?.[0];
+  if (shown && path && !scanning) scanFromBox(path);
+});
+
 listen('progress', ({ payload }) => {
   if (!scanning) return;
   Object.assign(scanning, payload);
@@ -754,12 +977,15 @@ window.addEventListener('resize', () => {
 
 (async () => {
   try {
-    setLanguage((await invoke('get_settings')).language);
+    const settings = await invoke('get_settings');
+    setLanguage(settings.language);
+    recent = settings.recent || [];
   } catch { /* keep English */ }
   $('lang').value = language;
   window.__TAURI__.app.getVersion().then((v) => { document.querySelector('.ver').textContent = `v${v}`; });
   render();
+  invoke('known_folders').then((list) => { places = list; refreshDrives('shortcuts', shortcuts); });
   drives = await invoke('list_drives');
-  if (current === 'drives' && !scanning) render();
+  refreshDrives('drive-cards', driveCards);
   invoke('check_update').then((u) => { pendingUpdate = u; renderUpdateBar(); });
 })();

@@ -4,7 +4,10 @@
 // force-delete flow shared with Xcare. No installer, no administrator rights.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod find;
 mod force_delete;
+mod mcp;
+mod mcp_tools;
 mod portable;
 mod scan;
 mod updater;
@@ -23,13 +26,17 @@ use tauri::{AppHandle, Emitter, Manager, State};
 #[serde(default, rename_all = "camelCase")]
 struct Settings {
     language: String,
+    /// Folders and drives scanned lately, newest first.
+    recent: Vec<String>,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { language: "en".into() }
+        Self { language: "en".into(), recent: Vec::new() }
     }
 }
+
+const RECENT: usize = 8;
 
 struct AppState {
     settings: Mutex<Settings>,
@@ -40,6 +47,8 @@ struct AppState {
     pending: Mutex<Option<(String, Vec<(PathBuf, u64)>)>>,
     /// The scan in progress, if any.
     scanning: Mutex<Option<Arc<scan::Progress>>>,
+    /// Folder names for the search box, indexed on the first search.
+    finder: find::Index,
     /// A newer release found on GitHub, waiting for the user to install it.
     update: Mutex<Option<updater::Update>>,
 }
@@ -79,10 +88,59 @@ async fn list_drives() -> Vec<win::Drive> {
     tauri::async_runtime::spawn_blocking(win::drives).await.unwrap_or_default()
 }
 
+/// Windows' folder picker, opened at `start` when that is a folder.
 #[tauri::command]
-async fn pick_folder(window: tauri::WebviewWindow) -> Result<Option<String>, String> {
+async fn pick_folder(window: tauri::WebviewWindow, start: Option<String>) -> Result<Option<String>, String> {
     let owner = window.hwnd().map_err(|e| e.to_string())?.0 as isize;
-    tauri::async_runtime::spawn_blocking(move || win::pick_folder(owner)).await.map_err(|e| e.to_string())?
+    let start = start.map(|s| find::expand(&s));
+    tauri::async_runtime::spawn_blocking(move || win::pick_folder(owner, start.as_deref()))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// What the search box offers for `text`: subfolders of a typed path, or
+/// folders whose names match.
+#[tauri::command]
+async fn find_folders(app: AppHandle, text: String) -> Result<find::Found, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        app.state::<AppState>().finder.find(&text, || {
+            // The profile first, so the user's own folders turn up first.
+            let profile = std::env::var("USERPROFILE").map(PathBuf::from).into_iter();
+            let drives = win::drives().into_iter().filter(|d| d.kind != "network").map(|d| PathBuf::from(d.path));
+            profile.chain(drives).collect()
+        })
+    })
+    .await
+    .map_err(|e| e.to_string())
+}
+
+#[derive(Serialize)]
+struct Place {
+    id: &'static str,
+    path: String,
+}
+
+#[tauri::command]
+async fn known_folders() -> Vec<Place> {
+    tauri::async_runtime::spawn_blocking(|| win::known_folders().into_iter().map(|(id, path)| Place { id, path }).collect())
+        .await
+        .unwrap_or_default()
+}
+
+#[tauri::command]
+fn forget_recent(state: State<AppState>, path: String) -> Vec<String> {
+    let mut settings = state.settings.lock().unwrap();
+    settings.recent.retain(|p| !p.eq_ignore_ascii_case(&path));
+    save_settings(&settings);
+    settings.recent.clone()
+}
+
+fn remember(state: &AppState, path: &str) {
+    let mut settings = state.settings.lock().unwrap();
+    settings.recent.retain(|p| !p.eq_ignore_ascii_case(path));
+    settings.recent.insert(0, path.to_string());
+    settings.recent.truncate(RECENT);
+    save_settings(&settings);
 }
 
 #[derive(Serialize, Clone)]
@@ -98,7 +156,7 @@ struct ProgressEvent {
 /// "progress" events while it runs.
 #[tauri::command]
 async fn start_scan(app: AppHandle, path: String) -> Result<scan::Summary, String> {
-    let root = PathBuf::from(path.trim());
+    let root = find::folder(&path);
     if !root.is_absolute() || !root.is_dir() {
         return Err("notFolder".into());
     }
@@ -138,6 +196,9 @@ async fn start_scan(app: AppHandle, path: String) -> Result<scan::Summary, Strin
     if scanning.as_ref().is_some_and(|p| Arc::ptr_eq(p, &progress)) {
         *scanning = None;
         *state.tree.lock().unwrap() = Some(Arc::new(RwLock::new(tree)));
+    }
+    if !summary.cancelled {
+        remember(&state, &summary.path);
     }
     Ok(summary)
 }
@@ -341,6 +402,9 @@ async fn install_update(app: AppHandle) -> Result<(), String> {
 fn main() {
     updater::finish_previous();
     portable::sync_appinfo();
+    if mcp::requested() {
+        return mcp_tools::serve();
+    }
     tauri::Builder::default()
         .manage(AppState {
             settings: Mutex::new(load_settings()),
@@ -348,6 +412,7 @@ fn main() {
             force: force_delete::Service::default(),
             pending: Mutex::new(None),
             scanning: Mutex::new(None),
+            finder: find::Index::default(),
             update: Mutex::new(None),
         })
         .invoke_handler(tauri::generate_handler![
@@ -355,6 +420,9 @@ fn main() {
             set_language,
             list_drives,
             pick_folder,
+            find_folders,
+            known_folders,
+            forget_recent,
             start_scan,
             cancel_scan,
             open_folder,

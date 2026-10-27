@@ -451,7 +451,7 @@ impl Tree {
     }
 
     /// The folder at `path`, if the scan saw it.
-    fn find(&self, path: &Path) -> Option<u32> {
+    pub fn find(&self, path: &Path) -> Option<u32> {
         let rest = path.strip_prefix(&self.root).ok()?;
         let mut at = 0u32;
         for part in rest.components() {
