@@ -72,6 +72,13 @@ function meter(p, cls = '') {
 /** Errors from Rust are message keys when we know them. */
 const errText = (e) => (I18N.en.ui[String(e)] ? t(String(e)) : String(e));
 
+/** Fades a newly opened page in. */
+function enter() {
+  if (!matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    pageEl.animate([{ opacity: 0, transform: 'translateY(6px)' }, { opacity: 1, transform: 'none' }], { duration: 240, easing: 'cubic-bezier(.2, .7, .2, 1)' });
+  }
+}
+
 function toast(text) {
   const el = $('toast');
   el.textContent = text;
@@ -201,6 +208,7 @@ async function startScan(path) {
   }
   scanning = null;
   render();
+  enter();
 }
 
 // ---------- folders ----------
@@ -357,7 +365,7 @@ function drawTreemap(l) {
   const scale = (W * H) / items.reduce((a, i) => a + i.size, 0);
   const blocks = squarify(items.map((i) => ({ ...i, area: i.size * scale })), 0, 0, W, H);
   box.innerHTML = blocks.map((b) => {
-    const style = `left:${b.x}px;top:${b.y}px;width:${b.w}px;height:${b.h}px;${b.kind === 'folder' ? `background:${b.color}` : b.kind === 'file' ? 'background:#2a3958' : ''}`;
+    const style = `left:${b.x}px;top:${b.y}px;width:${b.w}px;height:${b.h}px;${b.kind === 'folder' ? `background-color:${b.color}` : b.kind === 'file' ? 'background-color:#2a3958' : ''}`;
     const label = b.w > 46 && b.h > 30 ? `<b>${esc(b.name)}</b><small>${bytes(b.size)} · ${pctText(pct(b.size, total))}</small>` : '';
     const data = b.kind === 'folder' ? ` data-select="${b.id}"` : b.kind === 'file' ? ` data-path="${esc(b.path)}"` : '';
     return `<div class="tm ${b.kind}" style="${style}"${data} title="${esc(`${b.name} · ${bytes(b.size)}`)}">${label}</div>`;
@@ -493,6 +501,7 @@ document.addEventListener('click', async (e) => {
     current = d.page;
     if (current === 'drives') invoke('list_drives').then((list) => { drives = list; if (current === 'drives' && !scanning) render(); });
     render();
+    enter();
   } else if (d.scan) {
     startScan(d.scan);
   } else if (d.toggle) {
