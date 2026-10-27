@@ -1,6 +1,3 @@
-//! Copied from Xcare (src-tauri/src/force_delete.rs) without its file pickers.
-//! Xpace also uses parse_path, protected and under for the Recycle Bin.
-//! Keep the two in step: fixes to either belong in both.
 //! Explicit, snapshot-based deletion. Never called by the automatic cleaner.
 //! Win32 handles pin ancestors and identify targets; no shell commands, ACL
 //! takeover, driver tricks or arbitrary PID termination are used.
@@ -816,15 +813,146 @@ fn run_entries(
     out
 }
 
+// Native pickers keep the application portable, with no dialog plugin/runtime.
+#[repr(C)]
+#[derive(Default)]
+struct OpenFileName {
+    size: u32,
+    owner: isize,
+    instance: isize,
+    filter: *const u16,
+    custom_filter: *mut u16,
+    max_custom: u32,
+    filter_index: u32,
+    file: *mut u16,
+    max_file: u32,
+    title_file: *mut u16,
+    max_title: u32,
+    initial: *const u16,
+    title: *const u16,
+    flags: u32,
+    file_offset: u16,
+    extension_offset: u16,
+    default_extension: *const u16,
+    data: isize,
+    hook: isize,
+    template: *const u16,
+    reserved: *mut c_void,
+    reserved2: u32,
+    flags_ex: u32,
+}
+#[repr(C)]
+struct BrowseInfo {
+    owner: isize,
+    root: *const c_void,
+    display: *mut u16,
+    title: *const u16,
+    flags: u32,
+    callback: isize,
+    data: isize,
+    image: i32,
+}
+#[link(name = "comdlg32")]
+extern "system" {
+    fn GetOpenFileNameW(data: *mut OpenFileName) -> i32;
+    fn CommDlgExtendedError() -> u32;
+}
+#[link(name = "shell32")]
+extern "system" {
+    fn SHBrowseForFolderW(data: *mut BrowseInfo) -> *mut c_void;
+    fn SHGetPathFromIDListEx(id: *const c_void, path: *mut u16, len: u32, flags: u32) -> i32;
+}
+#[link(name = "ole32")]
+extern "system" {
+    fn CoInitializeEx(reserved: *const c_void, flags: u32) -> i32;
+    fn CoUninitialize();
+    fn CoTaskMemFree(data: *const c_void);
+}
+
+pub fn pick(folder: bool, owner: isize) -> Result<Vec<String>, String> {
+    if folder {
+        let initialized = unsafe { CoInitializeEx(null(), 2) };
+        if initialized < 0 {
+            return Err(format!("COM: {initialized}"));
+        }
+        let mut display = [0u16; 260];
+        let mut data = BrowseInfo {
+            owner,
+            root: null(),
+            display: display.as_mut_ptr(),
+            title: null(),
+            flags: 0x41,
+            callback: 0,
+            data: 0,
+            image: 0,
+        };
+        let id = unsafe { SHBrowseForFolderW(&mut data) };
+        let mut path = vec![0u16; 32768];
+        let result = if id.is_null() {
+            Ok(Vec::new())
+        } else {
+            let ok = unsafe { SHGetPathFromIDListEx(id, path.as_mut_ptr(), path.len() as u32, 0) };
+            unsafe {
+                CoTaskMemFree(id);
+            }
+            if ok == 0 {
+                Err("invalidPath".into())
+            } else {
+                Ok(vec![String::from_utf16_lossy(
+                    &path[..path.iter().position(|v| *v == 0).unwrap_or(0)],
+                )])
+            }
+        };
+        unsafe {
+            CoUninitialize();
+        }
+        result
+    } else {
+        let mut buffer = vec![0u16; 65536];
+        let mut data = OpenFileName {
+            size: std::mem::size_of::<OpenFileName>() as u32,
+            owner,
+            file: buffer.as_mut_ptr(),
+            max_file: buffer.len() as u32,
+            flags: 0x80000 | 0x1000 | 0x800 | 0x200 | 8,
+            ..Default::default()
+        }; // Explorer, file/path exist, multi-select, no chdir
+        if unsafe { GetOpenFileNameW(&mut data) } == 0 {
+            let code = unsafe { CommDlgExtendedError() };
+            return if code == 0 {
+                Ok(Vec::new())
+            } else {
+                Err(format!("File dialog: {code}"))
+            };
+        }
+        let parts: Vec<_> = buffer
+            .split(|v| *v == 0)
+            .take_while(|v| !v.is_empty())
+            .map(String::from_utf16_lossy)
+            .collect();
+        if parts.len() == 1 {
+            Ok(parts)
+        } else {
+            Ok(parts[1..]
+                .iter()
+                .map(|p| Path::new(&parts[0]).join(p).to_string_lossy().into_owned())
+                .collect())
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     struct Fixture(PathBuf);
     impl Fixture {
         fn new() -> Self {
+            // Tests run in parallel and the clock can repeat, so count too.
+            static NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
             let dir = std::env::temp_dir().join(format!(
-                "xcare-force-test-{}-{}",
+                "xpace-force-test-{}-{}-{}",
                 std::process::id(),
+                NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
                 std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap()
@@ -1003,6 +1131,8 @@ mod tests {
         assert_eq!(std::mem::size_of::<RmProcess>(), 668);
         assert_eq!(std::mem::size_of::<FileInfo>(), 52);
         assert_eq!(std::mem::size_of::<BasicInfo>(), 40);
+        assert_eq!(std::mem::size_of::<OpenFileName>(), 152);
+        assert_eq!(std::mem::size_of::<BrowseInfo>(), 64);
     }
     #[test]
     fn cannot_terminate_self_or_critical_categories() {

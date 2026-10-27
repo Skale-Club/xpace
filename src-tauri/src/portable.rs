@@ -19,6 +19,17 @@ pub fn data_dir() -> PathBuf {
     dir
 }
 
+/// Moves what an older version kept next to the exe into `Data\`. Same
+/// folder, so it is a rename, instant even for large files.
+pub fn migrate(names: &[&str]) {
+    let (from, to) = (exe_dir(), data_dir());
+    for name in names {
+        let (old, new) = (from.join(name), to.join(name));
+        if old.exists() && !new.exists() {
+            let _ = fs::rename(&old, &new);
+        }
+    }
+}
 /// Keeps the version in `App\AppInfo\appinfo.ini` (PortableApps metadata)
 /// in step with this exe, since self-updates replace only the exe.
 pub fn sync_appinfo() {

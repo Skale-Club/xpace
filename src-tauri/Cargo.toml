@@ -1,7 +1,7 @@
 [package]
 name = "xpace"
 version = "0.1.0"
-description = "Xpace: portable disk space analyzer"
+description = "Xpace: portable PC care, disk space, drivers and system information"
 edition = "2021"
 
 [build-dependencies]
@@ -14,7 +14,12 @@ serde_json = "1"
 ureq = { version = "2", features = ["json"] }
 minisign-verify = "0.2"
 base64 = "0.22"
+wmi = "0.13"
 rayon = "1"
+winreg = "0.52"
+png = "0.18"
+nvml-wrapper = "0.10"
+raw-cpuid = "11"
 
 [profile.release]
 codegen-units = 1
