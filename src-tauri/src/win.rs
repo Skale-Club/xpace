@@ -1,5 +1,5 @@
-//! Windows bits: the drive list, the folder picker and showing a path in
-//! Explorer.
+//! Windows bits: the drive list, the folder picker, the Recycle Bin and
+//! showing a path in Explorer.
 
 use serde::Serialize;
 use std::ffi::c_void;
@@ -38,8 +38,23 @@ struct BrowseInfo {
     image: i32,
 }
 
+/// SHFILEOPSTRUCTW (not packed on 64-bit Windows).
+#[repr(C)]
+struct FileOperation {
+    owner: isize,
+    function: u32,
+    from: *const u16,
+    to: *const u16,
+    flags: u16,
+    aborted: i32,
+    mappings: *mut c_void,
+    title: *const u16,
+}
+
 #[link(name = "shell32")]
 extern "system" {
+    fn IsUserAnAdmin() -> i32;
+    fn SHFileOperationW(operation: *mut FileOperation) -> i32;
     fn SHBrowseForFolderW(data: *mut BrowseInfo) -> *mut c_void;
     fn SHGetPathFromIDListEx(id: *const c_void, path: *mut u16, len: u32, flags: u32) -> i32;
 }
@@ -140,6 +155,48 @@ pub fn pick_folder(owner: isize) -> Result<Option<String>, String> {
     result
 }
 
+pub fn is_admin() -> bool {
+    unsafe { IsUserAnAdmin() != 0 }
+}
+
+/// Moves `paths` to the Recycle Bin with Windows' own progress window. Windows
+/// still asks before deleting for good anything too big for the Bin, and
+/// the user can stop it; check which paths are gone afterwards.
+pub fn recycle(owner: isize, paths: &[std::path::PathBuf]) -> Result<(), String> {
+    use std::os::windows::ffi::OsStrExt;
+    let mut from: Vec<u16> = Vec::new();
+    for path in paths {
+        from.extend(path.as_os_str().encode_wide());
+        from.push(0);
+    }
+    from.push(0);
+    const DELETE: u32 = 3;
+    // allow undo (Recycle Bin), no "are you sure" (Xpace asked), but warn
+    // before anything would be destroyed instead of recycled
+    const FLAGS: u16 = 0x40 | 0x10 | 0x4000;
+    let mut operation = FileOperation {
+        owner,
+        function: DELETE,
+        from: from.as_ptr(),
+        to: null(),
+        flags: FLAGS,
+        aborted: 0,
+        mappings: std::ptr::null_mut(),
+        title: null(),
+    };
+    let initialized = unsafe { CoInitializeEx(null(), 2) };
+    let result = unsafe { SHFileOperationW(&mut operation) };
+    if initialized >= 0 {
+        unsafe { CoUninitialize() };
+    }
+    match result {
+        0 => Ok(()),
+        // the user stopped it, or said no to deleting for good
+        0x4C7 => Err("aborted".into()),
+        code => Err(format!("Windows error {code:#x}")),
+    }
+}
+
 /// Opens Explorer with `path` selected (or, for a folder, opened).
 pub fn reveal(path: &str, open: bool) -> Result<(), String> {
     let path = Path::new(path);
@@ -155,4 +212,25 @@ pub fn reveal(path: &str, open: bool) -> Result<(), String> {
         command.raw_arg(format!("/select,\"{shown}\""));
     }
     command.spawn().map(|_| ()).map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn file_operation_layout_matches_windows_x64() {
+        assert_eq!(std::mem::size_of::<FileOperation>(), 56);
+    }
+
+    /// Puts a small temporary file in the real Recycle Bin, so it only runs
+    /// when asked: cargo test -- --ignored recycles
+    #[test]
+    #[ignore]
+    fn recycles_a_file() {
+        let file = std::env::temp_dir().join(format!("xpace-recycle-test-{}.txt", std::process::id()));
+        std::fs::write(&file, "Xpace test file, safe to delete.").unwrap();
+        recycle(0, &[file.clone()]).unwrap();
+        assert!(!file.exists());
+    }
 }

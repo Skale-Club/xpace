@@ -38,9 +38,32 @@ Click a folder (in the tree or in the treemap) to open it; the trail above the t
 Double-click a row, or use its arrow button, to show it in Explorer. **Export CSV** saves the current
 list. **Rescan** reads the same place again.
 
+## Deleting
+
+Scanning only reads. Deleting happens only for what you select and confirm, in **Folders** and
+**Largest files**:
+
+- Tick the box on a row (or several), or use a row's trash button. A bar shows how many items and how
+  much space are selected.
+- **Move to Recycle Bin** is the default and can be undone from the Bin. If something is too big
+  for the Bin, Windows asks before deleting it for good.
+- **Delete permanently…** first reviews the selection: files, folders, total size and which apps
+  have the files open. Then you choose to delete, to **close those apps and delete** (only apps that
+  are safe to close), or to **delete at the next restart** (needs Xpace running as administrator).
+  This uses the same reviewed force-delete engine as Xcare: every item is checked again just before
+  it is deleted, and anything that changed since the review is kept.
+- Protected: the scanned folder itself, drive roots, Windows, Program Files, ProgramData, your
+  profile folders themselves (Desktop, Documents, Downloads… but not what is inside them), system
+  files such as `pagefile.sys`, junctions and links, and hard-linked files. Only items inside the
+  scanned folder can be deleted.
+- Permanent deletion takes up to 100 selected items and 5,000 files and folders in total; the
+  Recycle Bin has no such limit.
+- After deleting, the tree, the treemap and the largest files update without a rescan, and the
+  header shows the space freed. File types only drop deleted files until the next scan.
+
 ## How it counts
 
-- Xpace only reads. It never changes, moves or deletes anything.
+- Scanning only reads; see [Deleting](#deleting) for what you choose to remove.
 - Sizes are file sizes, as Explorer's "Size" shows them, not the space allocated on disk. Compressed
   files and OneDrive files that are online-only count at their full size.
 - Junctions and symbolic links to folders are listed but not followed, so nothing is counted twice
@@ -68,8 +91,11 @@ e sem precisar de administrador. Ainda não há release publicada (27/10/2026); 
   clique duplo mostra no Explorer.
 - **Maiores arquivos** e **Tipos de arquivo** mostram para onde o espaço foi. **Exportar CSV** salva a
   lista em `Data/exports`.
-- O Xpace só lê: nunca altera nem apaga nada. Junções e links simbólicos não são seguidos, para não
-  contar nada duas vezes.
+- Junções e links simbólicos não são seguidos, para não contar nada duas vezes.
+- **Excluir**: marque as linhas (ou use a lixeira da linha) e escolha **Mover para a Lixeira** (dá
+  para desfazer) ou **Excluir definitivamente…**, que antes mostra o que será apagado e quais programas
+  estão usando os arquivos, e pode fechar esses programas ou excluir ao reiniciar. Pastas do sistema,
+  de programas e as pastas do perfil em si são protegidas. A árvore se atualiza sem nova análise.
 
 ## Español
 
@@ -82,8 +108,11 @@ instalación y sin necesidad de administrador. Aún no hay release publicada (27
   una carpeta; doble clic la muestra en el Explorador.
 - **Archivos más grandes** y **Tipos de archivo** muestran adónde fue el espacio. **Exportar CSV**
   guarda la lista en `Data/exports`.
-- Xpace solo lee: nunca cambia ni borra nada. Las uniones y los enlaces simbólicos no se siguen, para
-  no contar nada dos veces.
+- Las uniones y los enlaces simbólicos no se siguen, para no contar nada dos veces.
+- **Eliminar**: marca las filas (o usa la papelera de la fila) y elige **Mover a la Papelera** (se
+  puede deshacer) o **Eliminar definitivamente…**, que antes muestra qué se borrará y qué programas usan
+  los archivos, y puede cerrarlos o eliminar al reiniciar. Las carpetas del sistema, de programas y las
+  carpetas del perfil en sí están protegidas. El árbol se actualiza sin volver a analizar.
 
 ## Skale Club apps
 

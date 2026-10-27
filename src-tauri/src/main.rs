@@ -1,8 +1,10 @@
 // Xpace: portable disk space analyzer for Windows, in the spirit of TreeSize.
-// Shows which folders and files take the space on a drive. Read-only: it
-// never changes or deletes anything. No installer, no administrator rights.
+// Shows which folders and files take the space on a drive, and deletes what
+// the user picks: to the Recycle Bin, or for good through the reviewed
+// force-delete flow shared with Xcare. No installer, no administrator rights.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod force_delete;
 mod portable;
 mod scan;
 mod updater;
@@ -11,7 +13,7 @@ mod win;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 use std::{fs, process::Command};
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -31,8 +33,11 @@ impl Default for Settings {
 
 struct AppState {
     settings: Mutex<Settings>,
-    /// The last finished scan.
-    tree: Mutex<Option<Arc<scan::Tree>>>,
+    /// The last finished scan; deleting from it updates its totals.
+    tree: Mutex<Option<Arc<RwLock<scan::Tree>>>>,
+    /// The reviewed permanent deletion, and the size of each selected file.
+    force: force_delete::Service,
+    pending: Mutex<Option<(String, Vec<(PathBuf, u64)>)>>,
     /// The scan in progress, if any.
     scanning: Mutex<Option<Arc<scan::Progress>>>,
     /// A newer release found on GitHub, waiting for the user to install it.
@@ -132,7 +137,7 @@ async fn start_scan(app: AppHandle, path: String) -> Result<scan::Summary, Strin
     // A newer scan replaced this one: leave the field to it.
     if scanning.as_ref().is_some_and(|p| Arc::ptr_eq(p, &progress)) {
         *scanning = None;
-        *state.tree.lock().unwrap() = Some(Arc::new(tree));
+        *state.tree.lock().unwrap() = Some(Arc::new(RwLock::new(tree)));
     }
     Ok(summary)
 }
@@ -144,26 +149,140 @@ fn cancel_scan(state: State<AppState>) {
     }
 }
 
-fn current_tree(state: &State<AppState>) -> Result<Arc<scan::Tree>, String> {
+fn current_tree(state: &AppState) -> Result<Arc<RwLock<scan::Tree>>, String> {
     state.tree.lock().unwrap().clone().ok_or_else(|| "noScan".into())
 }
 
 #[tauri::command]
 async fn open_folder(state: State<'_, AppState>, id: u32) -> Result<scan::Listing, String> {
     let tree = current_tree(&state)?;
-    tauri::async_runtime::spawn_blocking(move || tree.listing(id).ok_or_else(|| "noFolder".to_string()))
+    tauri::async_runtime::spawn_blocking(move || tree.read().unwrap().listing(id).ok_or_else(|| "noFolder".to_string()))
         .await
         .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
 fn largest_files(state: State<AppState>) -> Result<Vec<scan::BigFile>, String> {
-    Ok(current_tree(&state)?.top_files().to_vec())
+    Ok(current_tree(&state)?.read().unwrap().top_files().to_vec())
 }
 
 #[tauri::command]
 fn file_types(state: State<AppState>) -> Result<Vec<scan::TypeStat>, String> {
-    Ok(current_tree(&state)?.types().to_vec())
+    Ok(current_tree(&state)?.read().unwrap().types().to_vec())
+}
+
+// ---------- deleting ----------
+
+/// Only things inside the scanned folder can be deleted, never the folder
+/// itself, nothing protected (Windows, programs, profile folders) and
+/// nothing missing. Returns each path with its size if it is a file.
+fn checked(tree: &scan::Tree, paths: &[String]) -> Result<Vec<(PathBuf, u64)>, String> {
+    if paths.is_empty() {
+        return Err("invalidSelection".into());
+    }
+    paths
+        .iter()
+        .map(|raw| {
+            let path = force_delete::parse_path(raw)?;
+            let root = tree.root();
+            if !force_delete::under(&path, root) || force_delete::under(root, &path) {
+                return Err("outsideScan".to_string());
+            }
+            if force_delete::protected(&path) {
+                return Err("protectedPath".into());
+            }
+            let meta = fs::symlink_metadata(&path).map_err(|_| "notFound")?;
+            Ok((path, if meta.is_dir() { 0 } else { meta.len() }))
+        })
+        .collect()
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Deleted {
+    /// Paths that are gone now.
+    removed: Vec<String>,
+    /// Paths still there (stopped, failed or scheduled for restart).
+    kept: Vec<String>,
+    summary: scan::Summary,
+    outcome: Option<force_delete::Outcome>,
+    /// Why the Recycle Bin stopped, if it did.
+    error: Option<String>,
+}
+
+/// Takes what is gone out of the scan and says what is gone and what isn't.
+fn settle(tree: &RwLock<scan::Tree>, paths: Vec<(PathBuf, u64)>, outcome: Option<force_delete::Outcome>, error: Option<String>) -> Deleted {
+    let mut tree = tree.write().unwrap();
+    let (mut removed, mut kept) = (Vec::new(), Vec::new());
+    for (path, size) in paths {
+        if fs::symlink_metadata(&path).is_err() {
+            tree.forget(&path, size);
+            removed.push(path.display().to_string());
+        } else {
+            kept.push(path.display().to_string());
+        }
+    }
+    Deleted { removed, kept, summary: tree.summary.clone(), outcome, error }
+}
+
+/// Moves the chosen files and folders to the Recycle Bin.
+#[tauri::command]
+async fn recycle(app: AppHandle, window: tauri::WebviewWindow, paths: Vec<String>) -> Result<Deleted, String> {
+    let owner = window.hwnd().map_err(|e| e.to_string())?.0 as isize;
+    let tree = current_tree(&app.state::<AppState>())?;
+    let checked = checked(&tree.read().unwrap(), &paths)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let list: Vec<PathBuf> = checked.iter().map(|(p, _)| p.clone()).collect();
+        let error = win::recycle(owner, &list).err();
+        settle(&tree, checked, None, error)
+    })
+    .await
+    .map_err(|e| e.to_string())
+}
+
+/// Reviews a permanent deletion: counts, size and the apps holding files.
+#[tauri::command]
+async fn prepare_delete(app: AppHandle, paths: Vec<String>) -> Result<force_delete::Preview, String> {
+    let tree = current_tree(&app.state::<AppState>())?;
+    let checked = checked(&tree.read().unwrap(), &paths)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        let preview = state.force.prepare(paths)?;
+        // The token is private to the shared module; read it from the reply.
+        let token = serde_json::to_value(&preview).ok().and_then(|v| v["token"].as_str().map(String::from)).unwrap_or_default();
+        *state.pending.lock().unwrap() = Some((token, checked));
+        Ok(preview)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Deletes the reviewed selection for good. `mode` is "delete", "terminate"
+/// (close the apps holding files first) or "reboot" (at the next restart,
+/// administrator only).
+#[tauri::command]
+async fn execute_delete(app: AppHandle, token: String, mode: String) -> Result<Deleted, String> {
+    let tree = current_tree(&app.state::<AppState>())?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        let paths = match state.pending.lock().unwrap().take() {
+            Some((pending, paths)) if pending == token => paths,
+            _ => return Err("expiredSelection".to_string()),
+        };
+        let outcome = state.force.execute(&token, &mode);
+        let (outcome, error) = match outcome {
+            Ok(outcome) => (Some(outcome), None),
+            Err(error) => (None, Some(error)),
+        };
+        Ok(settle(&tree, paths, outcome, error))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+fn is_admin() -> bool {
+    win::is_admin()
 }
 
 /// Shows a file or folder in Explorer; `open` opens a folder instead.
@@ -226,6 +345,8 @@ fn main() {
         .manage(AppState {
             settings: Mutex::new(load_settings()),
             tree: Mutex::new(None),
+            force: force_delete::Service::default(),
+            pending: Mutex::new(None),
             scanning: Mutex::new(None),
             update: Mutex::new(None),
         })
@@ -240,6 +361,10 @@ fn main() {
             largest_files,
             file_types,
             reveal,
+            recycle,
+            prepare_delete,
+            execute_delete,
+            is_admin,
             save_export,
             open_site,
             check_update,

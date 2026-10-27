@@ -2,7 +2,8 @@
 
 // Xpace window: drive picker, scan progress, folder tree with a treemap,
 // largest files and file types. The scan lives on the Rust side; folders are
-// fetched one at a time as they are opened.
+// fetched one at a time as they are opened. Rows can be selected and moved
+// to the Recycle Bin or, after a review, deleted for good.
 
 const { invoke } = window.__TAURI__.core;
 const { listen } = window.__TAURI__.event;
@@ -21,6 +22,8 @@ const ICONS = {
   reveal: '<path d="M15 3h6v6M10 14 21 3M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>',
   usb: '<path d="M10 2h4v6h-4z"/><rect x="7" y="8" width="10" height="14" rx="2"/>',
   network: '<rect x="16" y="16" width="6" height="6" rx="1"/><rect x="2" y="16" width="6" height="6" rx="1"/><rect x="9" y="2" width="6" height="6" rx="1"/><path d="M5 16v-3a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v3M12 12V8"/>',
+  trash: '<path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14M10 11v5M14 11v5"/>',
+  alert: '<path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/>',
 };
 
 const NAV = ['drives', '-', 'folders', 'files', 'types'];
@@ -39,6 +42,8 @@ const expanded = new Set([0]);
 let selected = 0;       // folder shown in the treemap and the trail
 let largest = null;
 let types = null;
+const picked = new Map(); // path -> size of each selected file or folder
+let deleting = false;
 
 // ---------- formatting ----------
 
@@ -70,7 +75,11 @@ function meter(p, cls = '') {
 }
 
 /** Errors from Rust are message keys when we know them. */
-const errText = (e) => (I18N.en.ui[String(e)] ? t(String(e)) : String(e));
+function errText(e) {
+  const key = String(e);
+  if (I18N.en.ui[`err_${key}`]) return t(`err_${key}`);
+  return I18N.en.ui[key] ? t(key) : key;
+}
 
 /** Fades a newly opened page in. */
 function enter() {
@@ -101,7 +110,8 @@ function renderHeader() {
   const busy = scanning !== null;
   $('title').textContent = busy ? t('scanningTitle', { path: scanning.path }) : t(current === 'drives' ? 'drivesTitle' : current);
   $('subtitle').textContent = !busy && summary && current !== 'drives'
-    ? `${summary.path} · ${t('scannedIn', { files: count(summary.files), folders: count(summary.folders), time: elapsed(summary.elapsedMs) })}`
+    ? `${summary.path} · ${t('scannedIn', { files: count(summary.files), folders: count(summary.folders), time: elapsed(summary.elapsedMs) })}` +
+      (summary.freed ? ` · ${t('freed', { size: bytes(summary.freed) })}` : '')
     : '';
   const actions = [];
   if (!busy && summary && current !== 'drives') {
@@ -136,9 +146,167 @@ function render() {
   renderNav();
   renderHeader();
   for (const el of document.querySelectorAll('[data-t]')) el.textContent = t(el.dataset.t);
+  renderSelbar();
   if (scanning) return renderScanning();
   if (current !== 'drives' && !summary) current = 'drives';
   ({ drives: renderDrives, folders: renderFolders, files: renderFiles, types: renderTypes })[current]();
+}
+
+// ---------- selecting and deleting ----------
+
+/** The checkbox and trash button of a row that can be deleted. */
+function pickBox(path, size) {
+  return `<input type="checkbox" class="pick" data-pick="${esc(path)}" data-size="${size}" title="${esc(t('pickTip'))}"${picked.has(path) ? ' checked' : ''}>`;
+}
+const trashButton = (path, size) => `<button class="reveal trash" data-trash="${esc(path)}" data-size="${size}" title="${esc(t('trashTip'))}">${svg(ICONS.trash)}</button>`;
+
+function renderSelbar() {
+  const bar = $('selbar');
+  const show = picked.size > 0 && !scanning && (current === 'folders' || current === 'files');
+  bar.hidden = !show;
+  if (!show) return;
+  const size = [...picked.values()].reduce((a, b) => a + b, 0);
+  const off = deleting ? ' disabled' : '';
+  bar.innerHTML = `<span class="sel-count">${svg(ICONS.trash)}<b>${esc(t('selected', { n: count(picked.size), size: bytes(size) }))}</b></span>
+    <button class="btn ghost small" data-act="unpick"${off}>${esc(t('clearSel'))}</button>
+    <button class="btn small" data-act="forever"${off}>${esc(t('forever'))}</button>
+    <button class="btn primary small" data-act="bin"${off}>${svg(ICONS.trash)}${esc(t('toBin'))}</button>`;
+}
+
+/** Shows the dialog; resolves with the id of the button pressed, or null. */
+function dialog(title, body, buttons) {
+  const modal = $('modal');
+  $('modal-title').textContent = title;
+  $('modal-body').innerHTML = body;
+  $('modal-actions').innerHTML = buttons.map((b) => `<button class="btn ${b.cls || ''}" data-choice="${b.id}"${b.off ? ` disabled title="${esc(b.off)}"` : ''}>${esc(b.label)}</button>`).join('');
+  modal.hidden = false;
+  modal.querySelector('[data-choice]:not([disabled])')?.focus();
+  return new Promise((resolve) => {
+    const done = (value) => {
+      modal.hidden = true;
+      modal.onclick = null;
+      document.removeEventListener('keydown', onKey, true);
+      resolve(value);
+    };
+    const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); done(null); } };
+    document.addEventListener('keydown', onKey, true);
+    modal.onclick = (e) => {
+      const choice = e.target.closest('[data-choice]');
+      if (choice) done(choice.dataset.choice === 'cancel' ? null : choice.dataset.choice);
+      else if (e.target === modal) done(null);
+    };
+  });
+}
+
+function pathList(paths) {
+  const shown = paths.slice(0, 6).map((p) => `<li title="${esc(p)}"><bdi>${esc(p)}</bdi></li>`).join('');
+  const more = paths.length > 6 ? `<li class="more">${esc(t('andMore', { n: count(paths.length - 6) }))}</li>` : '';
+  return `<ul class="del-paths">${shown}${more}</ul>`;
+}
+
+const cancelButton = () => ({ id: 'cancel', label: t('cancel') });
+
+async function moveToBin(paths, sizeOf = (p) => picked.get(p) || 0) {
+  const size = paths.reduce((a, p) => a + sizeOf(p), 0);
+  const choice = await dialog(paths.length === 1 ? t('binTitleOne') : t('binTitle', { n: count(paths.length) }),
+    `${pathList(paths)}<p>${esc(t('binNote', { size: bytes(size) }))}</p>`,
+    [cancelButton(), { id: 'go', label: t('toBin'), cls: 'primary' }]);
+  if (!choice) return;
+  await runDelete(() => invoke('recycle', { paths }), 'bin');
+}
+
+async function deleteForever(paths) {
+  deleting = true;
+  renderSelbar();
+  toast(t('reviewing'));
+  let preview;
+  try {
+    [preview] = await Promise.all([invoke('prepare_delete', { paths }), admin === null ? invoke('is_admin').then((a) => { admin = a; }) : null]);
+  } catch (e) {
+    deleting = false;
+    renderSelbar();
+    toast(errText(e));
+    return;
+  }
+  deleting = false;
+  renderSelbar();
+  const apps = preview.blockerError
+    ? `<p class="del-warn">${esc(t('blockerError', { error: preview.blockerError }))}</p>`
+    : preview.blockers.length
+      ? `<ul class="del-apps">${preview.blockers.map((b) => `<li><b>${esc(b.name || '?')}</b><span>PID ${b.pid}</span><em class="${b.canTerminate ? '' : 'bad'}">${esc(t(b.canTerminate ? 'canClose' : 'protectedApp'))}</em></li>`).join('')}</ul>`
+      : `<p class="note">${esc(t('noBlockers'))}</p>`;
+  const body = `<p class="del-warn">${svg(ICONS.alert)}<span>${esc(t('foreverNote'))}</span></p>
+    ${pathList(preview.paths)}
+    <div class="del-facts"><span><b>${count(preview.files)}</b>${esc(t('factFiles'))}</span><span><b>${count(preview.folders)}</b>${esc(t('factFolders'))}</span><span><b>${bytes(preview.bytes)}</b>${esc(t('factSize'))}</span></div>
+    <h4>${esc(t('blocking'))}</h4>${apps}`;
+  const buttons = [cancelButton()];
+  if (preview.blockers.length) {
+    const closable = !preview.blockerError && preview.blockers.every((b) => b.canTerminate);
+    buttons.push({ id: 'reboot', label: t('atRestart'), off: admin ? '' : t('restartNeedsAdmin') });
+    if (closable) buttons.push({ id: 'terminate', label: t('closeAndDelete'), cls: 'danger' });
+  }
+  buttons.push({ id: 'delete', label: t('deleteNow'), cls: preview.blockers.length ? '' : 'danger' });
+  const mode = await dialog(t('foreverTitle'), body, buttons);
+  if (!mode) return;
+  await runDelete(() => invoke('execute_delete', { token: preview.token, mode }), mode);
+}
+
+let admin = null; // whether Xpace runs as administrator, asked once
+
+/** Runs a delete, then refreshes what is on screen and reports. */
+async function runDelete(call, mode) {
+  deleting = true;
+  renderSelbar();
+  let result;
+  try {
+    result = await call();
+  } catch (e) {
+    deleting = false;
+    renderSelbar();
+    toast(errText(e));
+    return;
+  }
+  const freed = result.summary.freed - (summary?.freed || 0);
+  summary = result.summary;
+  for (const p of result.removed) picked.delete(p);
+  await refreshAfterDelete();
+  deleting = false;
+  render();
+
+  const o = result.outcome;
+  if (mode === 'reboot' && o) {
+    toast(t('scheduledDone', { n: count(o.scheduled) }));
+  } else if (result.removed.length) {
+    const key = (mode === 'bin' ? 'binDone' : 'foreverDone') + (result.removed.length === 1 ? 'One' : '');
+    toast(t(key, { n: count(result.removed.length), size: bytes(freed) }));
+  }
+  const problems = [];
+  if (result.error && !(mode === 'bin' && !result.kept.length)) problems.push(`<p class="del-warn">${esc(errText(result.error))}</p>`);
+  if (o?.errors?.length) {
+    problems.push(`<ul class="del-errors">${o.errors.map((e) => `<li><bdi>${esc(e.path)}</bdi><span>${esc(errText(e.error))}</span></li>`).join('')}</ul>`);
+  } else if (result.kept.length && mode !== 'reboot') {
+    problems.push(pathList(result.kept), `<p>${esc(t('keptNote'))}</p>`);
+  }
+  if (problems.length) await dialog(t('notDeleted'), problems.join(''), [{ id: 'cancel', label: t('close'), cls: 'primary' }]);
+}
+
+/** Folder listings, the largest files and the types are read again. */
+async function refreshAfterDelete() {
+  listings.clear();
+  largest = null;
+  types = null;
+  for (const id of [...expanded]) {
+    try {
+      await loadFolder(id);
+    } catch {
+      expanded.delete(id);
+    }
+  }
+  try {
+    await loadFolder(selected);
+  } catch {
+    selected = 0;
+  }
 }
 
 // ---------- drives ----------
@@ -195,6 +363,7 @@ async function startScan(path) {
     const result = await invoke('start_scan', { path });
     if (scanning?.path !== path) return; // a newer scan took over
     summary = result;
+    picked.clear();
     listings.clear();
     expanded.clear();
     expanded.add(0);
@@ -229,11 +398,15 @@ function folderRow(f, parentSize, path, depth) {
   const canOpen = !f.link && !f.denied && (f.files > 0 || f.folders > 0);
   const tag = f.link ? `<span class="tag">${esc(t('link'))}</span>` : f.denied ? `<span class="tag">${esc(t('denied'))}</span>` : '';
   const p = pct(f.size, parentSize);
-  return `<tr class="row${f.id === selected ? ' sel' : ''}" data-id="${f.id}" data-path="${esc(path)}">
+  // The scanned folder itself, links and unreadable folders can't be deleted here.
+  const deletable = f.id !== 0 && !f.link && !f.denied;
+  return `<tr class="row${f.id === selected ? ' sel' : ''}${picked.has(path) ? ' picked' : ''}" data-id="${f.id}" data-path="${esc(path)}">
     <td><div class="name" style="padding-left:${depth * 18}px">
+      ${deletable ? pickBox(path, f.size) : '<span class="pick-space"></span>'}
       <button class="tw${open ? ' open' : ''}${canOpen ? '' : ' none'}" data-toggle="${f.id}">${svg(ICONS.chevron)}</button>
       ${folderIcon(f)}<span class="label" title="${esc(path)}">${esc(f.name)}</span>${tag}
       <button class="reveal" data-open="${esc(path)}" title="${esc(t('openFolder'))}">${svg(ICONS.reveal)}</button>
+      ${deletable ? trashButton(path, f.size) : ''}
     </div></td>
     <td>${bytes(f.size)}</td>
     <td class="bar">${meter(p)}</td>
@@ -246,10 +419,11 @@ function folderRow(f, parentSize, path, depth) {
 
 function fileRow(file, parentSize, path, depth) {
   const p = pct(file.size, parentSize);
-  return `<tr class="row" data-path="${esc(path)}">
+  return `<tr class="row${picked.has(path) ? ' picked' : ''}" data-path="${esc(path)}">
     <td><div class="name" style="padding-left:${depth * 18}px">
-      <span class="tw none"></span><span class="k-file">${svg(ICONS.file)}</span><span class="label" title="${esc(path)}">${esc(file.name)}</span>
+      ${pickBox(path, file.size)}<span class="tw none"></span><span class="k-file">${svg(ICONS.file)}</span><span class="label" title="${esc(path)}">${esc(file.name)}</span>
       <button class="reveal" data-reveal="${esc(path)}" title="${esc(t('reveal'))}">${svg(ICONS.reveal)}</button>
+      ${trashButton(path, file.size)}
     </div></td>
     <td>${bytes(file.size)}</td>
     <td class="bar">${meter(p)}</td>
@@ -413,9 +587,9 @@ async function renderFiles() {
   const rows = largest.map((f) => {
     const name = f.path.slice(f.path.lastIndexOf('\\') + 1);
     const dir = f.path.slice(0, f.path.lastIndexOf('\\'));
-    return `<tr class="row" data-path="${esc(f.path)}">
-      <td><div class="name"><span class="k-file">${svg(ICONS.file)}</span><span class="label" title="${esc(f.path)}">${esc(name)}</span>
-        <button class="reveal" data-reveal="${esc(f.path)}" title="${esc(t('reveal'))}">${svg(ICONS.reveal)}</button></div></td>
+    return `<tr class="row${picked.has(f.path) ? ' picked' : ''}" data-path="${esc(f.path)}">
+      <td><div class="name">${pickBox(f.path, f.size)}<span class="k-file">${svg(ICONS.file)}</span><span class="label" title="${esc(f.path)}">${esc(name)}</span>
+        <button class="reveal" data-reveal="${esc(f.path)}" title="${esc(t('reveal'))}">${svg(ICONS.reveal)}</button>${trashButton(f.path, f.size)}</div></td>
       <td>${bytes(f.size)}</td>
       <td class="muted path-cell" title="${esc(dir)}"><bdi>${esc(dir)}</bdi></td>
       <td class="muted">${date(f.modified)}</td>
@@ -442,7 +616,7 @@ async function renderTypes() {
       <td class="muted">${pctText(pct(x.size, total))}</td>
       <td class="muted">${count(x.files)}</td>
     </tr>`).join('');
-  pageEl.innerHTML = `<div class="stats">
+  pageEl.innerHTML = `${summary.freed ? `<div class="warn-note">${esc(t('typesAfterDelete'))}</div>` : ''}<div class="stats">
       <div class="stat"><small>${esc(t('sizeCount'))}</small><b>${bytes(summary.size)}</b></div>
       <div class="stat"><small>${esc(t('filesCount'))}</small><b>${count(summary.files)}</b></div>
       <div class="stat"><small>${esc(t('foldersCount'))}</small><b>${count(summary.folders)}</b></div>
@@ -523,12 +697,37 @@ document.addEventListener('click', async (e) => {
     startScan(summary.path);
   } else if (d.act === 'export') {
     exportCsv();
+  } else if (d.act === 'unpick') {
+    picked.clear();
+    render();
+  } else if (d.act === 'bin' && !deleting) {
+    moveToBin([...picked.keys()]);
+  } else if (d.act === 'forever' && !deleting) {
+    deleteForever([...picked.keys()]);
   }
 });
 
+// Checkboxes and trash buttons sit inside rows that open folders on click:
+// handle them first and keep the row from reacting.
+document.addEventListener('click', (e) => {
+  const box = e.target.closest('[data-pick]');
+  const trash = e.target.closest('[data-trash]');
+  if (!box && !trash) return;
+  e.stopPropagation();
+  if (box) {
+    // The box is already ticked or unticked when the click arrives.
+    if (box.checked) picked.set(box.dataset.pick, Number(box.dataset.size));
+    else picked.delete(box.dataset.pick);
+    box.closest('tr')?.classList.toggle('picked', box.checked);
+    renderSelbar();
+  } else if (!deleting) {
+    moveToBin([trash.dataset.trash], () => Number(trash.dataset.size));
+  }
+}, true);
+
 document.addEventListener('dblclick', (e) => {
   const row = e.target.closest('tr[data-path]');
-  if (!row || e.target.closest('button')) return;
+  if (!row || e.target.closest('button') || e.target.closest('[data-pick]')) return;
   reveal(row.dataset.path, row.dataset.id !== undefined);
 });
 

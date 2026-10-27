@@ -276,6 +276,8 @@ pub struct Summary {
     pub elapsed_ms: u64,
     pub cancelled: bool,
     pub scanned_at: u64,
+    /// Bytes deleted from inside Xpace since the scan.
+    pub freed: u64,
 }
 
 #[derive(Serialize)]
@@ -373,6 +375,7 @@ pub fn scan(root: &Path, progress: &Progress) -> Tree {
         elapsed_ms: started.elapsed().as_millis() as u64,
         cancelled: progress.cancelled(),
         scanned_at: seconds(Ok(SystemTime::now())),
+        freed: 0,
     };
     Tree { root: root.to_path_buf(), nodes, top, types, summary }
 }
@@ -441,6 +444,76 @@ impl Tree {
             more_files: rest.len() as u64,
             more_bytes: rest.iter().map(|f| f.size).sum(),
         })
+    }
+
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+
+    /// The folder at `path`, if the scan saw it.
+    fn find(&self, path: &Path) -> Option<u32> {
+        let rest = path.strip_prefix(&self.root).ok()?;
+        let mut at = 0u32;
+        for part in rest.components() {
+            let name = part.as_os_str().to_string_lossy();
+            at = *self.nodes[at as usize].children.iter().find(|&&c| self.nodes[c as usize].name.eq_ignore_ascii_case(&name))?;
+        }
+        Some(at)
+    }
+
+    /// Takes a deleted file or folder out of the totals, without a rescan.
+    /// Folders are known to the scan; for a file, `file_size` is its size.
+    /// File types only lose deleted files, since a folder's mix of types
+    /// isn't kept.
+    pub fn forget(&mut self, path: &Path, file_size: u64) {
+        let folder = self.find(path).filter(|&id| id != 0);
+        let (parent, size, files, folders) = match folder {
+            Some(id) => {
+                let node = &self.nodes[id as usize];
+                let removed = (node.parent, node.size, node.files, node.folders + 1);
+                self.nodes[removed.0 as usize].children.retain(|&c| c != id);
+                // Detached: its path can no longer be built, so it can't be opened.
+                self.nodes[id as usize].parent = NO_PARENT;
+                removed
+            }
+            None => match path.parent().and_then(|p| self.find(p)) {
+                Some(parent) => (parent, file_size, 1, 0),
+                None => return,
+            },
+        };
+        let mut at = parent;
+        while at != NO_PARENT {
+            let node = &mut self.nodes[at as usize];
+            node.size = node.size.saturating_sub(size);
+            node.files = node.files.saturating_sub(files);
+            node.folders = node.folders.saturating_sub(folders);
+            let up = node.parent;
+            if up != NO_PARENT {
+                let mut siblings = std::mem::take(&mut self.nodes[up as usize].children);
+                siblings.sort_by(|&a, &b| self.nodes[b as usize].size.cmp(&self.nodes[a as usize].size));
+                self.nodes[up as usize].children = siblings;
+            }
+            at = up;
+        }
+        let inside = |file: &str| {
+            let file = Path::new(file);
+            file == path || (folder.is_some() && file.starts_with(path))
+        };
+        self.top.retain(|f| !inside(&f.path));
+        if folder.is_none() {
+            let ext = extension(&path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default());
+            if let Some(stat) = self.types.iter_mut().find(|t| t.ext == ext) {
+                stat.size = stat.size.saturating_sub(size);
+                stat.files = stat.files.saturating_sub(1);
+            }
+            self.types.retain(|t| t.files > 0);
+            self.types.sort_unstable_by(|a, b| b.size.cmp(&a.size));
+        }
+        let root = &self.nodes[0];
+        self.summary.size = root.size;
+        self.summary.files = root.files;
+        self.summary.folders = root.folders;
+        self.summary.freed += size;
     }
 
     pub fn top_files(&self) -> &[BigFile] {
@@ -525,6 +598,39 @@ mod tests {
         assert!(tree.listing(link.id).unwrap().files.is_empty(), "listed files through a junction");
         assert!(tree.top_files().iter().all(|b| !b.path.ends_with("huge.bin")));
         fs::remove_dir(f.0.join("link")).unwrap();
+    }
+
+    #[test]
+    fn deleted_items_leave_the_totals() {
+        let f = Fixture::new("forget");
+        fs::create_dir_all(f.0.join("big/inner")).unwrap();
+        fs::create_dir_all(f.0.join("small")).unwrap();
+        fs::write(f.0.join("big/a.bin"), [0u8; 1000]).unwrap();
+        fs::write(f.0.join("big/inner/b.bin"), [0u8; 500]).unwrap();
+        fs::write(f.0.join("small/c.txt"), [0u8; 20]).unwrap();
+        let mut tree = scan(&f.0, &Progress::default());
+
+        // A file: its folder and the root shrink, and it leaves the lists.
+        tree.forget(&f.0.join("big/a.bin"), 1000);
+        assert_eq!((tree.summary.size, tree.summary.files, tree.summary.freed), (520, 2, 1000));
+        let root = tree.listing(0).unwrap();
+        assert_eq!(root.folders[0].name, "big", "{:?}", root.folders.iter().map(|d| (&d.name, d.size)).collect::<Vec<_>>());
+        assert_eq!(root.folders[0].size, 500);
+        assert!(tree.top_files().iter().all(|b| !b.path.ends_with("a.bin")));
+        assert_eq!(tree.types().iter().find(|t| t.ext == ".bin").map(|t| (t.size, t.files)), Some((500, 1)));
+
+        // A folder: gone from its parent with everything under it.
+        let big = root.folders[0].id;
+        tree.forget(&f.0.join("big"), 0);
+        assert_eq!((tree.summary.size, tree.summary.files, tree.summary.folders), (20, 1, 1));
+        let root = tree.listing(0).unwrap();
+        assert_eq!(root.folders.iter().map(|d| d.name.as_str()).collect::<Vec<_>>(), ["small"]);
+        assert!(tree.listing(big).is_none());
+        assert!(tree.top_files().iter().all(|b| !b.path.contains("inner")));
+
+        // Something the scan never saw changes nothing.
+        tree.forget(&f.0.join("elsewhere/x"), 5);
+        assert_eq!(tree.summary.size, 20);
     }
 
     #[test]

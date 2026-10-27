@@ -43,6 +43,15 @@ for one folder at a time (`open_folder`), and that folder's files are read from 
 opened. Junctions and directory symbolic links are listed but never followed. A scan emits
 `progress` events while it runs and can be cancelled.
 
+Deleting: `recycle` sends the selection to the Recycle Bin with `SHFileOperationW` (undo allowed,
+Windows warns before destroying anything too big for the Bin). Permanent deletion goes through
+`force_delete.rs`, a copy of Xcare's reviewed force-delete module without its file pickers:
+`prepare_delete` snapshots the selection and lists the apps holding files (Restart Manager), and
+`execute_delete` re-checks every entry before deleting, closing those apps, or scheduling deletion at
+restart. Keep the two copies in step. Both paths only accept items inside the scanned folder and
+reject Xcare's protected locations. Afterwards `Tree::forget` takes what is gone out of the totals,
+so the window does not need a rescan.
+
 All the Skale X apps use the same palette: navy surfaces, primary blue `#5173D6` and soft blue
 `#8FA9EE`. Keep English, Portuguese and Spanish UI strings consistent. Settings and exports use the
 portable data directory; do not commit runtime data or private signing keys.
@@ -58,6 +67,10 @@ implementation and check links and commands.
 - Scan a folder containing a junction and check it is listed as a link and not counted.
 - Cancel a scan midway, then rescan; open folders, the treemap and both lists; export a CSV.
 - Check the three languages and the folder dialog.
+- Delete a file and a folder to the Recycle Bin and restore them; delete a file that an app has
+  open permanently and with "close the apps"; try a protected folder (Documents itself) and check it
+  is refused; check the totals after each.
+- `cargo test -- --ignored recycles` sends a small temporary file to the real Recycle Bin.
 
 Keep documentation aligned with observed behavior. Update the README's English instructions and
 Portuguese/Spanish summaries together. A feature listed in the README should have an implemented
