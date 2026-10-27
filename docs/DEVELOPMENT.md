@@ -75,9 +75,8 @@ the key outside Git and back it up securely. The current workflow supplies an em
 password; using a password-protected key requires updating the workflow's secret configuration
 first.
 
-**Readiness checked October 26, 2026:** the `Skale-Club/xpace` GitHub repository has not been
-created yet, so there are no releases or Actions secrets. Create it, then confirm that a matching signing key is available through a repository or permitted
-organization secret before pushing a release tag.
+Before tagging a release, confirm that the repository has a signing key available through a
+repository or permitted organization secret. A normal source push does not publish a binary.
 
 For a reviewed release:
 

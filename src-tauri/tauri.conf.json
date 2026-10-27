@@ -11,7 +11,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "Xpace · Skale Club",
+        "title": "Xpace \u00b7 Skale Club",
         "width": 1240,
         "height": 800,
         "minWidth": 980,
@@ -28,7 +28,7 @@
   "bundle": {
     "active": false,
     "publisher": "Skale Club",
-    "copyright": "© 2026 Skale Club",
+    "copyright": "\u00a9 2026 Skale Club",
     "homepage": "https://skale.club",
     "icon": [
       "icons/32x32.png",

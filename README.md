@@ -8,9 +8,9 @@ Made by **[Skale Club](https://skale.club)**.
 
 ## Availability
 
-**Status checked October 26, 2026:** version 0.1.0 is in source control only; no GitHub repository
-release or downloadable executable has been published. Use the [build instructions](docs/DEVELOPMENT.md)
-until a release is available. Future binaries belong in
+**Status checked October 27, 2026:** source version 0.1.0. No GitHub Release or
+publicly downloadable executable has been published. Build from source using the
+[development guide](docs/DEVELOPMENT.md). Future release binaries belong in
 [Releases](https://github.com/Skale-Club/xpace/releases).
 
 The app can offer signed updates when a newer release contains both an executable and its signature.
@@ -60,7 +60,7 @@ guide](docs/DEVELOPMENT.md) for prerequisites, build, tests and signed releases.
 ## Português
 
 O Xpace mostra o que ocupa espaço no disco, no estilo do TreeSize. É um exe pequeno, sem instalação
-e sem precisar de administrador. Ainda não há release publicada (26/10/2026); veja as
+e sem precisar de administrador. Ainda não há release publicada (27/10/2026); veja as
 [instruções de compilação](docs/DEVELOPMENT.md).
 
 - Abra o `Xpace.exe`, escolha um disco ou uma pasta e espere a análise.
@@ -74,7 +74,7 @@ e sem precisar de administrador. Ainda não há release publicada (26/10/2026); 
 ## Español
 
 Xpace muestra qué ocupa espacio en el disco, al estilo de TreeSize. Es un exe pequeño, sin
-instalación y sin necesidad de administrador. Aún no hay release publicada (26/10/2026); consulta las
+instalación y sin necesidad de administrador. Aún no hay release publicada (27/10/2026); consulta las
 [instrucciones de compilación](docs/DEVELOPMENT.md).
 
 - Abre `Xpace.exe`, elige un disco o una carpeta y espera el análisis.
@@ -84,6 +84,25 @@ instalación y sin necesidad de administrador. Aún no hay release publicada (26
   guarda la lista en `Data/exports`.
 - Xpace solo lee: nunca cambia ni borra nada. Las uniones y los enlaces simbólicos no se siguen, para
   no contar nada dos veces.
+
+## Skale Club apps
+
+These Windows apps belong to the [Skale-Club organization](https://github.com/Skale-Club).
+They share navy interfaces, blue accents, transparent product symbols, and English,
+Portuguese and Spanish UI text. Each app has its own executable and portable Data folder.
+
+| App | Purpose |
+| --- | --- |
+| [Xink](https://github.com/Skale-Club/xink) | Draw over the screen during presentations or recordings |
+| [Xpecs](https://github.com/Skale-Club/xpecs) | Inspect hardware, live sensors and benchmark results |
+| [Xcare](https://github.com/Skale-Club/xcare) | Clean selected files, manage startup programs and explicitly remove stubborn files |
+| [Xnote](https://github.com/Skale-Club/xnote) | Transcribe meetings and turn notes into summaries and tasks |
+| [Xpace](https://github.com/Skale-Club/xpace) | Analyze disk usage with a folder tree, treemap, largest files and file-type totals |
+
+Repository access may be required depending on project visibility. Report problems through the
+relevant repository, including app version, Windows version and reproduction steps. Remove
+personal information from reports and transcripts before sharing.
+
 
 ---
 
