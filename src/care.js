@@ -84,7 +84,7 @@ async function checkAll() {
   await Promise.all([
     refreshStatus(),
     scanJunk(),
-    invoke('list_startup').then((s) => { startup = s; loadIcons('startup', repaintPage('startup')); }),
+    reloadStartup(),
     invoke('list_power_plans').then((p) => { plans = p; }),
   ]);
   checkedAt = new Date();
@@ -271,6 +271,13 @@ async function runClean() {
 
 // ---------- startup ----------
 
+/** Reads the list again, so programs added or removed since show up. */
+async function reloadStartup() {
+  startup = await invoke('list_startup');
+  repaintPage('startup')();
+  loadIcons('startup', repaintPage('startup'));
+}
+
 function renderStartup() {
   if (!startup) { pageEl.innerHTML = `<p class="loading">…</p>`; return; }
   const on = startup.filter((s) => s.enabled).length;
@@ -292,7 +299,7 @@ function renderStartup() {
     `<div class="toolbar"><b class="grow">${esc(t('startupSummary', { on, total: startup.length }))}</b>` +
     `<select id="startup-sort" class="sel">` +
     ['name', 'status', 'location'].map((s) => `<option value="${s}"${s === startupSort ? ' selected' : ''}>${esc(t(`sort${s[0].toUpperCase()}${s.slice(1)}`))}</option>`).join('') +
-    `</select></div>` +
+    `</select><button class="btn" data-action="refresh-startup">${esc(t('refresh'))}</button></div>` +
     banner + `<div class="card">${rows}</div><p class="note">${esc(t('startupNote'))}</p>`;
   $('startup-sort').addEventListener('change', (e) => { startupSort = e.target.value; render(); });
 }
@@ -399,6 +406,7 @@ pageEl.addEventListener('click', async (e) => {
   else if (action === 'check') checkAll();
   else if (action === 'clean') runClean();
   else if (action === 'admin') attempt(() => invoke('restart_as_admin'));
+  else if (action === 'refresh-startup') attempt(reloadStartup);
   else if (action === 'refresh-apps') {
     apps = null;
     renderAppList();
@@ -422,7 +430,7 @@ pageEl.addEventListener('click', async (e) => {
 Object.assign(PAGES, {
   overview: { render: renderOverview },
   cleaner: { render: renderCleaner },
-  startup: { render: renderStartup },
+  startup: { render: renderStartup, show: () => { if (startup) attempt(reloadStartup); } },
   apps: { render: renderApps },
   optimize: { render: renderOptimize },
   forceDelete: { render: () => window.XcareForceDelete.render(pageEl) },

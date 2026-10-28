@@ -19,7 +19,9 @@
   restart (Xcare's force-delete engine). Protected locations are refused; totals update without a
   rescan and the header shows the space freed.
 - Startup page: sort the list by name, by programs that are on first, or by where each one is set
-  (this user, startup folder, all users). Windows itself starts them in no set order.
+  (this user, startup folder, all users). Windows itself starts them in no set order. The list is
+  read again each time the page opens, and a Refresh button reads it on demand, so programs
+  uninstalled while Xpace is open drop out.
 
 ## 0.1.0 — 2026-10-27
 
