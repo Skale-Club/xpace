@@ -21,6 +21,7 @@ let lastClean = null;
 let selected = null;      // Set of category ids, filled from defaults after the first scan
 let appsQuery = '';
 let appsSort = 'size';
+let startupSort = 'name';
 let progress = null;      // last "scan-progress" / "clean-progress" event, with its kind
 
 function since(seconds) {
@@ -273,7 +274,14 @@ async function runClean() {
 function renderStartup() {
   if (!startup) { pageEl.innerHTML = `<p class="loading">…</p>`; return; }
   const on = startup.filter((s) => s.enabled).length;
-  const rows = startup.map((s) => {
+  const LOCATIONS = ['user', 'folder', 'machine', 'machine32', 'folderAll'];
+  // Windows launches them in no order of its own; this only orders the list.
+  const byName = (a, b) => a.name.localeCompare(b.name, locale());
+  const list = [...startup].sort((a, b) =>
+    startupSort === 'status' ? (b.enabled - a.enabled) || byName(a, b)
+      : startupSort === 'location' ? (LOCATIONS.indexOf(a.location) - LOCATIONS.indexOf(b.location)) || byName(a, b)
+        : byName(a, b));
+  const rows = list.map((s) => {
     const blocked = s.admin && !admin;
     return `<div class="item with-icon">${itemIcon('startup', s.id, s.name)}<div><div class="name">${esc(s.name)}</div><div class="cmd" title="${esc(s.command)}">${esc(s.command)}</div></div>` +
       `<span class="tag">${esc(t(`loc_${s.location}`))}</span>` +
@@ -281,8 +289,12 @@ function renderStartup() {
   }).join('');
   const banner = startup.some((s) => s.admin) ? adminBanner(t('adminStartup')) : '';
   pageEl.innerHTML =
-    `<div class="toolbar"><b>${esc(t('startupSummary', { on, total: startup.length }))}</b></div>` +
+    `<div class="toolbar"><b class="grow">${esc(t('startupSummary', { on, total: startup.length }))}</b>` +
+    `<select id="startup-sort" class="sel">` +
+    ['name', 'status', 'location'].map((s) => `<option value="${s}"${s === startupSort ? ' selected' : ''}>${esc(t(`sort${s[0].toUpperCase()}${s.slice(1)}`))}</option>`).join('') +
+    `</select></div>` +
     banner + `<div class="card">${rows}</div><p class="note">${esc(t('startupNote'))}</p>`;
+  $('startup-sort').addEventListener('change', (e) => { startupSort = e.target.value; render(); });
 }
 
 async function toggleStartup(id) {
