@@ -16,9 +16,10 @@ publicly downloadable executable has been published. Build from source using the
 [development guide](docs/DEVELOPMENT.md). Future release binaries belong in
 [Releases](https://github.com/Skale-Club/xpace/releases).
 
-The app can offer signed updates when a newer release contains both an executable and its signature.
-Updates require internet access and are installed when you select the update action; your `Data`
-folder is retained.
+Once running, the app updates itself: it checks GitHub Releases when it opens and every 6 hours,
+downloads a newer signed version in the background and installs it when you close the app. The
+version button at the foot of the sidebar opens the updates panel, with **Check now** and
+**Restart now**. Your `Data` folder is kept.
 
 ## Run it
 
@@ -269,8 +270,8 @@ A push to `main` alone does not publish an executable.
 
 **Disponibilidade:** em 27/10/2026, ainda não há release nem executável publicado. Consulte
 [Releases](https://github.com/Skale-Club/xpace/releases) ou as [instruções de
-compilação](docs/DEVELOPMENT.md). As atualizações dependem de uma release assinada e da ação do
-usuário.
+compilação](docs/DEVELOPMENT.md). Depois de aberto, o app se atualiza sozinho a cada nova
+release assinada.
 
 O Xpace cuida do PC e mostra o hardware: verificação de saúde, limpeza, espaço em disco, drivers,
 programas de inicialização e apps, no estilo do CCleaner, TreeSize e Driver Booster, mais
@@ -303,8 +304,8 @@ e o Xpecs.
 
 **Disponibilidad:** al 27/10/2026, aún no hay release ni ejecutable publicado. Consulte
 [Releases](https://github.com/Skale-Club/xpace/releases) o las [instrucciones de
-compilación](docs/DEVELOPMENT.md). Las actualizaciones requieren una release firmada y la acción del
-usuario.
+compilación](docs/DEVELOPMENT.md). Una vez abierta, la app se actualiza sola con cada nueva
+release firmada.
 
 Xpace cuida el PC y muestra el hardware: revisión de salud, limpieza, espacio en disco,
 controladores, programas de inicio y apps, al estilo de CCleaner, TreeSize y Driver Booster, más

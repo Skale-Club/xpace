@@ -63,8 +63,6 @@ struct AppState {
     settings: Mutex<Settings>,
     /// Hardware information, filled in by a background thread at startup.
     info: Mutex<Option<Value>>,
-    /// A newer release found on GitHub, waiting for the user to install it.
-    update: Mutex<Option<updater::Update>>,
 }
 
 fn save_settings(settings: &Settings) {
@@ -147,27 +145,23 @@ fn save_report(name: String, html: String) -> Result<String, String> {
     Ok(path.display().to_string())
 }
 
-/// Looks for a newer release; quietly None when offline.
+/// Where the background updater stands, for the updates panel.
 #[tauri::command]
-async fn check_update(app: AppHandle) -> Option<updater::Update> {
-    tauri::async_runtime::spawn_blocking(move || {
-        let update = updater::check().ok().flatten();
-        *app.state::<AppState>().update.lock().unwrap() = update.clone();
-        update
-    })
-    .await
-    .ok()
-    .flatten()
+fn update_status() -> updater::Status {
+    updater::status()
 }
 
-/// Downloads and verifies the update, swaps the exe and restarts.
+/// Looks for a newer release now; the result arrives as `update-status`.
 #[tauri::command]
-async fn install_update(app: AppHandle) -> Result<(), String> {
-    let update = app.state::<AppState>().update.lock().unwrap().clone().ok_or("no update")?;
-    tauri::async_runtime::spawn_blocking(move || updater::install(&update))
-        .await
-        .map_err(|e| e.to_string())??;
+fn check_update() {
+    updater::check_now();
+}
+
+/// Installs the downloaded update now and restarts into it.
+#[tauri::command]
+fn restart_to_update(app: AppHandle) -> Result<(), String> {
     bench::stop_stress();
+    updater::restart()?;
     app.exit(0);
     Ok(())
 }
@@ -188,7 +182,7 @@ fn main() {
         return mcp_tools::serve();
     }
     tauri::Builder::default()
-        .manage(AppState { settings: Mutex::new(load_settings()), info: Mutex::new(None), update: Mutex::new(None) })
+        .manage(AppState { settings: Mutex::new(load_settings()), info: Mutex::new(None) })
         .manage(care::Care::default())
         .manage(space::Space::default())
         .invoke_handler(tauri::generate_handler![
@@ -200,8 +194,9 @@ fn main() {
             set_stress,
             save_report,
             open_site,
+            update_status,
             check_update,
-            install_update,
+            restart_to_update,
             care::get_status,
             care::scan_junk,
             care::clean_junk,
@@ -243,6 +238,10 @@ fn main() {
         .setup(|app| {
             start_info_scan(app.handle().clone());
             care::check_disks(app.handle().clone());
+            let handle = app.handle().clone();
+            updater::start(move |status| {
+                let _ = handle.emit("update-status", status);
+            });
             Ok(())
         })
         .on_window_event(|_, event| {
@@ -250,6 +249,12 @@ fn main() {
                 bench::stop_stress();
             }
         })
-        .run(tauri::generate_context!())
-        .expect("failed to start Xpace");
+        .build(tauri::generate_context!())
+        .expect("failed to start Xpace")
+        .run(|_, event| {
+            // A downloaded update replaces the exe once the app closes.
+            if let tauri::RunEvent::Exit = event {
+                updater::apply();
+            }
+        });
 }

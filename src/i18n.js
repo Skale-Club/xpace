@@ -33,8 +33,6 @@ const I18N = {
       busyStress: 'Stop the stress test to run benchmarks.',
       generated: 'Generated', snapshot: 'Sensors snapshot', results: 'Benchmark results', value: 'Value',
       days: 'd', hours: 'h', minutes: 'min',
-      updateAvailable: 'Xpace {v} is available.', updateNow: 'Update now', updating: 'Updating…',
-      updateFailed: 'Update failed: {error}',
     },
     labels: {},
   },
@@ -67,8 +65,6 @@ const I18N = {
       busyStress: 'Pare o teste de estresse para rodar benchmarks.',
       generated: 'Gerado em', snapshot: 'Leitura dos sensores', results: 'Resultados dos benchmarks', value: 'Valor',
       days: 'd', hours: 'h', minutes: 'min',
-      updateAvailable: 'O Xpace {v} está disponível.', updateNow: 'Atualizar agora', updating: 'Atualizando…',
-      updateFailed: 'Não foi possível atualizar: {error}',
     },
     labels: {
       'Processor': 'Processador', 'Name': 'Nome', 'Vendor': 'Fabricante', 'Family / model / stepping': 'Família / modelo / stepping',
@@ -127,8 +123,6 @@ const I18N = {
       busyStress: 'Detén la prueba de estrés para ejecutar benchmarks.',
       generated: 'Generado el', snapshot: 'Lectura de sensores', results: 'Resultados de benchmarks', value: 'Valor',
       days: 'd', hours: 'h', minutes: 'min',
-      updateAvailable: 'Xpace {v} está disponible.', updateNow: 'Actualizar ahora', updating: 'Actualizando…',
-      updateFailed: 'No se pudo actualizar: {error}',
     },
     labels: {
       'Processor': 'Procesador', 'Name': 'Nombre', 'Vendor': 'Fabricante', 'Family / model / stepping': 'Familia / modelo / stepping',

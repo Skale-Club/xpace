@@ -1,7 +1,7 @@
 'use strict';
 
-// Xpace window: the menu, the header, updates and language. The pages live
-// in care.js, space.js, drivers.js, hardware.js and force-delete.js.
+// Xpace window: the menu, the header and language; updates.js shows updates.
+// The pages live in care.js, space.js, drivers.js, hardware.js and force-delete.js.
 
 const NAV = [
   { group: 'groupCare', pages: ['overview', 'cleaner', 'space', 'startup', 'apps', 'drivers', 'optimize'] },
@@ -12,26 +12,6 @@ const NAV = [
 // The summary's menu item reads "Hardware"; its page and tabs say "Summary".
 const navLabel = (id) => t(id === 'summary' ? 'hardware' : id);
 
-let pendingUpdate = null; // newer release on GitHub, from check_update
-
-function renderUpdateBar() {
-  const bar = $('update-bar');
-  bar.hidden = !pendingUpdate;
-  if (!pendingUpdate) return;
-  bar.innerHTML = `<span>${esc(t('updateAvailable', { v: pendingUpdate.version }))}</span>` +
-    `<button class="btn small primary" id="update-now">${esc(t('updateNow'))}</button>`;
-  $('update-now').onclick = async (e) => {
-    e.target.disabled = true;
-    e.target.textContent = t('updating');
-    try {
-      await invoke('install_update'); // the app restarts on success
-    } catch (err) {
-      toast(t('updateFailed', { error: err }));
-      renderUpdateBar();
-    }
-  };
-}
-
 function paintAdmin() {
   const badge = $('admin-badge');
   badge.textContent = admin ? `● ${t('admin')}` : t('notAdmin');
@@ -39,7 +19,7 @@ function paintAdmin() {
 }
 
 function renderNav() {
-  renderUpdateBar();
+  updates.render();
   const on = PAGES[current]?.nav || current;
   $('nav').innerHTML = NAV.map(({ group, pages }) =>
     `<div class="nav-group">${esc(t(group))}</div>` +
@@ -90,7 +70,5 @@ $('lang').addEventListener('change', (e) => {
   $('lang').value = language;
   admin = await invoke('is_admin').catch(() => false);
   renderNav();
-  window.__TAURI__.app.getVersion().then((v) => { document.querySelector('.ver').textContent = `v${v}`; });
-  invoke('check_update').then((u) => { pendingUpdate = u; renderUpdateBar(); });
   await startCare();
 })();
